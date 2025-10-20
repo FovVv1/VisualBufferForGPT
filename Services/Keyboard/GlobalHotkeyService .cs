@@ -1,4 +1,5 @@
-﻿using System;
+﻿// Services/GlobalHotkeyService.cs
+using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using VisualBuffer.Diagnostics;
@@ -14,192 +15,128 @@ namespace VisualBuffer.Services.Keyboard
         private LowLevelKeyboardProc? _proc;
         private IntPtr _hookId = IntPtr.Zero;
 
-        private readonly Stopwatch _copySw = new();
-        private readonly Stopwatch _pasteSw = new();
+        // Config
+        private const int DoubleCopyWindowMs = 450;
 
-        private const int CopyDoubleThresholdMs = 1000; // Ctrl+C×2: ~1 сек
-        private const int PasteDoubleThresholdMs = 350;  // Ctrl+V×2: быстрый
+        // State
+        private DateTime _lastCtrlC = DateTime.MinValue;
+        private bool _pasteHoldArmed;
+        private IntPtr _pasteHoldFg;
 
-        // Win32
-        private const int WH_KEYBOARD_LL = 13;
-        private const int WM_KEYDOWN = 0x0100;
-        private const int WM_KEYUP = 0x0101;
-
-        private const int VK_LCONTROL = 0xA2;
-        private const int VK_RCONTROL = 0xA3;
-        private const int VK_CONTROL = 0x11;
-        private const int VK_C = 0x43;
-        private const int VK_V = 0x56;
-
-        private bool _ctrlDown;
-        private bool _vIsDown;              // ← чтобы отсекать авто-повторы WM_KEYDOWN(V)
-        private bool _awaitingPaste;
-        private bool _canvasHoldActive;
-        private IntPtr _pendingPasteHwnd;
-
-        public GlobalHotkeyService()
+        public void Install()
         {
+            if (_hookId != IntPtr.Zero) return;
             _proc = HookCallback;
-            _hookId = SetHook(_proc);
+            using var cur = Process.GetCurrentProcess();
+            using var mod = cur.MainModule!;
+            _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(mod.ModuleName), 0);
             Logger.Info("GlobalHotkeyService hook installed.");
         }
 
         public void Dispose()
         {
-            if (_hookId != IntPtr.Zero)
+            try
             {
-                UnhookWindowsHookEx(_hookId);
+                if (_hookId != IntPtr.Zero) UnhookWindowsHookEx(_hookId);
                 _hookId = IntPtr.Zero;
-                Logger.Info("GlobalHotkeyService hook uninstalled.");
+                _proc = null;
             }
+            catch { /* never throw */ }
         }
-
-        private IntPtr SetHook(LowLevelKeyboardProc proc)
-        {
-            using var p = Process.GetCurrentProcess();
-            using var m = p.MainModule!;
-            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(m.ModuleName), 0);
-        }
-
-        private static bool IsKey(int vk, int key) => vk == key;
 
         private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            try
+            if (nCode >= 0)
             {
-                if (nCode >= 0)
+                var msg = (int)wParam;
+                var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+
+                // ВАЖНО: пропускаем И НЕ УЧИТЫВАЕМ инжектированные события
+                bool injected =
+                    (data.flags & LLKHF_INJECTED) != 0 ||
+                    (data.flags & LLKHF_LOWER_IL_INJECTED) != 0;
+
+                // мы ничего не блокируем вообще — всегда CallNextHookEx
+                // но для своей логики учитываем только НЕинжектированные события
+                if (!injected)
                 {
-                    int vkCode = Marshal.ReadInt32(lParam);
+                    bool isCtrlDown = IsCtrlPressed();
+                    bool isKeyDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                    bool isKeyUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 
-                    if (wParam == (IntPtr)WM_KEYDOWN)
+                    // Double Copy: дважды Ctrl+C подряд в узком окне времени
+                    if (isKeyDown && isCtrlDown && data.vkCode == VK_C)
                     {
-                        // CTRL state
-                        if (vkCode == VK_LCONTROL || vkCode == VK_RCONTROL)
-                            _ctrlDown = true;
-
-                        // Ctrl+C×2 — с порогом 1 сек
-                        if (_ctrlDown && IsKey(vkCode, VK_C))
+                        var now = DateTime.UtcNow;
+                        if ((now - _lastCtrlC).TotalMilliseconds <= DoubleCopyWindowMs)
                         {
-                            if (_copySw.IsRunning && _copySw.ElapsedMilliseconds <= CopyDoubleThresholdMs)
-                            {
-                                _copySw.Reset();
-                                Logger.Info("DoubleCopy detected.");
-                                DoubleCopy?.Invoke(this, EventArgs.Empty);
-                            }
-                            else
-                            {
-                                _copySw.Restart();
-                            }
+                            _lastCtrlC = DateTime.MinValue;
+                            try { DoubleCopy?.Invoke(this, EventArgs.Empty); } catch { }
                         }
-
-                        // Ctrl+V логика (двойное нажатие → hold до отпускания)
-                        if (_ctrlDown && IsKey(vkCode, VK_V))
+                        else
                         {
-                            // отсекаем авто-повторы, пока V держат
-                            if (_vIsDown)
-                                return (IntPtr)1; // подавляем повторное WM_KEYDOWN(V)
-
-                            _vIsDown = true;
-
-                            // если холст уже в hold — просто подавляем дальнейшие V
-                            if (_canvasHoldActive)
-                                return (IntPtr)1;
-
-                            if (!_awaitingPaste)
-                            {
-                                // первое V: ждём второе в пределах порога
-                                _awaitingPaste = true;
-                                _pasteSw.Restart();
-                                _pendingPasteHwnd = GetForegroundWindow();
-                                return (IntPtr)1; // подавляем первое V
-                            }
-                            else if (_pasteSw.ElapsedMilliseconds <= PasteDoubleThresholdMs)
-                            {
-                                // второе V во времени → запускаем hold
-                                _awaitingPaste = false;
-                                _pasteSw.Reset();
-
-                                _canvasHoldActive = true;
-                                Logger.Info("PasteHoldStart.");
-                                PasteHoldStart?.Invoke(this, new PasteHoldContext(_pendingPasteHwnd));
-                                return (IntPtr)1;
-                            }
-                            // если второе V пришло слишком поздно — дадим обработаться блоком WM_KEYUP (ре-инжект)
+                            _lastCtrlC = now;
                         }
                     }
-                    else if (wParam == (IntPtr)WM_KEYUP)
+
+                    // PasteHold — по вашему желанию: пример — зажатый Ctrl+V
+                    if (isKeyDown && isCtrlDown && data.vkCode == VK_V && !_pasteHoldArmed)
                     {
-                        // отпускание V
-                        if (vkCode == VK_V)
-                        {
-                            _vIsDown = false;
-
-                            if (_canvasHoldActive)
-                            {
-                                _canvasHoldActive = false;
-                                Logger.Info("PasteHoldEnd.");
-                                PasteHoldEnd?.Invoke(this, EventArgs.Empty);
-                            }
-                            else if (_awaitingPaste && _pasteSw.ElapsedMilliseconds > PasteDoubleThresholdMs)
-                            {
-                                // было одно V — считаем обычной вставкой
-                                _awaitingPaste = false;
-                                _pasteSw.Reset();
-                                Logger.Info("Single Ctrl+V detected — reinject.");
-                                SendCtrlV();
-                            }
-                        }
-
-                        // отпускание CTRL
-                        if (vkCode == VK_LCONTROL || vkCode == VK_RCONTROL)
-                        {
-                            _ctrlDown = false;
-
-                            // если при отпускании Ctrl был активен hold — завершить
-                            if (_canvasHoldActive)
-                            {
-                                _canvasHoldActive = false;
-                                Logger.Info("PasteHoldEnd (Ctrl up).");
-                                PasteHoldEnd?.Invoke(this, EventArgs.Empty);
-                            }
-
-                            // сброс «ожидания второго V», чтобы не залипало состояние
-                            if (_awaitingPaste)
-                            {
-                                _awaitingPaste = false;
-                                _pasteSw.Reset();
-
-                                //WW
-                            }
-                        }
+                        _pasteHoldArmed = true;
+                        _pasteHoldFg = GetForegroundWindow();
+                        try { PasteHoldStart?.Invoke(this, new PasteHoldContext(_pasteHoldFg)); } catch { }
+                    }
+                    if (isKeyUp && data.vkCode == VK_V && _pasteHoldArmed)
+                    {
+                        _pasteHoldArmed = false;
+                        try { PasteHoldEnd?.Invoke(this, EventArgs.Empty); } catch { }
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                Logger.Error("Exception in HookCallback.", ex);
-            }
-            return CallNextHookEx(_hookId, nCode, wParam, lParam);
-        }
 
-        private static void SendCtrlV()
-        {
-            const uint KEYEVENTF_KEYUP = 0x0002;
-            keybd_event((byte)VK_CONTROL, 0, 0, 0);
-            keybd_event((byte)VK_V, 0, 0, 0);
-            keybd_event((byte)VK_V, 0, KEYEVENTF_KEYUP, 0);
-            keybd_event((byte)VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+            // НИЧЕГО НЕ БЛОКИРУЕМ
+            return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
         }
 
         public sealed record PasteHoldContext(IntPtr ForegroundHwnd);
 
+        // Helpers
+        private static bool IsCtrlPressed()
+            => (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
         // Win32
+
+        private const int WH_KEYBOARD_LL = 13;
+
+        private const int WM_KEYDOWN = 0x0100;
+        private const int WM_KEYUP = 0x0101;
+        private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_SYSKEYUP = 0x0105;
+
+        private const int VK_CONTROL = 0x11;
+        private const int VK_C = 0x43;
+        private const int VK_V = 0x56;
+
+        private const int LLKHF_INJECTED = 0x10;
+        private const int LLKHF_LOWER_IL_INJECTED = 0x02;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KBDLLHOOKSTRUCT
+        {
+            public int vkCode;
+            public int scanCode;
+            public int flags;
+            public int time;
+            public IntPtr dwExtraInfo;
+        }
+
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-        [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-        [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
-        [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-        [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
-        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, uint dwExtraInfo);
+
+        [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+        [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string? lpModuleName);
+        [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] private static extern short GetKeyState(int nVirtKey);
     }
 }

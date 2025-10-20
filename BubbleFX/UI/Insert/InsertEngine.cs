@@ -110,7 +110,7 @@ namespace VisualBuffer.BubbleFX.UI.Insert
 
                 // Для браузеров/прочих — ровно один Ctrl+V
                 SafeSetClipboard(text); // положим ещё раз непосредственно перед клавишами
-                Thread.Sleep(5);
+                Thread.Sleep(10);
                 SendCtrlV_Input(0, txn);
                 txn.Log("Result", "Single Ctrl+V sent (holdMs=0).");
             }
@@ -142,7 +142,7 @@ namespace VisualBuffer.BubbleFX.UI.Insert
             SafeSetClipboard(text);
             var top = GetAncestor(hwnd, GA_ROOT);
             BringToForegroundWithLog(top, txn);
-            Thread.Sleep(60);
+            Thread.Sleep(80);
             SendCtrlV_Input(0, txn);
             txn?.Log("Result", "Single Ctrl+V to HWND.");
         }
