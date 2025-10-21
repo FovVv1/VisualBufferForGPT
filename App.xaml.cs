@@ -8,9 +8,9 @@ using VisualBuffer.Services.Keyboard;
 
 namespace VisualBuffer
 {
-    public partial class App : System.Windows.Application
+    public partial class App : Application
     {
-        private GlobalHotkeyService? _hotkeys;
+        // Холст можно оставить, если он тебе ещё нужен для другого UI
         private Services.Clipboard.ClipboardListener? _clipboard;
         private BubbleFX.UI.Canvas.CanvasWindow? _canvas;
 
@@ -24,13 +24,14 @@ namespace VisualBuffer
             _canvas = new BubbleFX.UI.Canvas.CanvasWindow();
             _canvas.Hide();
 
-            // слушатель буфера — только для кэша, без показа UI
+            // слушатель буфера — для кэша
             _clipboard = new Services.Clipboard.ClipboardListener();
 
-            _hotkeys = new GlobalHotkeyService();
+            // НОВОЕ: синглтон + Install(), без new GlobalHotkeyService()
+            GlobalHotkeyService.Instance.Install();
 
-            // Пузырь — только по Ctrl+C×2 (в UI-поток!)
-            _hotkeys.DoubleCopy += (_, __) =>
+            // Пузырь по двойному Ctrl+C (в UI-поток)
+            GlobalHotkeyService.Instance.DoubleCopy += (_, __) =>
             {
                 try
                 {
@@ -43,34 +44,10 @@ namespace VisualBuffer
                         });
                     }
                 }
-                catch (Exception ex) { Logger.Error("DoubleCopy handler failed.", ex); }
-            };
-
-            // Холст — показываем, пока удерживается второй Ctrl+V
-            _hotkeys.PasteHoldStart += (_, ctx) =>
-            {
-                try
+                catch (Exception ex)
                 {
-                    Dispatcher.BeginInvoke(() =>
-                    {
-                        InsertEngine.Instance.BeginDeferredPaste(ctx.ForegroundHwnd);
-                        _canvas!.ShowOverlayHold();
-                    });
+                    Logger.Error("DoubleCopy handler failed.", ex);
                 }
-                catch (Exception ex) { Logger.Error("PasteHoldStart handler failed.", ex); }
-            };
-
-            _hotkeys.PasteHoldEnd += (_, __) =>
-            {
-                try
-                {
-                    Dispatcher.BeginInvoke(() =>
-                    {
-                        InsertEngine.Instance.CancelDeferredPaste();
-                        _canvas!.Hide();
-                    });
-                }
-                catch (Exception ex) { Logger.Error("PasteHoldEnd handler failed.", ex); }
             };
 
             Logger.Info("App Startup completed.");
@@ -78,7 +55,7 @@ namespace VisualBuffer
 
         protected override void OnExit(ExitEventArgs e)
         {
-            _hotkeys?.Dispose();
+            try { GlobalHotkeyService.Instance.Dispose(); } catch { }
             _clipboard?.Dispose();
             base.OnExit(e);
             Logger.Info("=== App exit ===");
@@ -89,7 +66,7 @@ namespace VisualBuffer
             this.DispatcherUnhandledException += (s, ex) =>
             {
                 Logger.Error("DispatcherUnhandledException", ex.Exception);
-                ex.Handled = true; // чтобы приложение не падало
+                ex.Handled = true;
             };
 
             AppDomain.CurrentDomain.UnhandledException += (s, ex) =>

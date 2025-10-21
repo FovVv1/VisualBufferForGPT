@@ -1,35 +1,37 @@
-﻿// Services/GlobalHotkeyService.cs
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using VisualBuffer.Diagnostics;
 
 namespace VisualBuffer.Services.Keyboard
 {
+    /// <summary>
+    /// Минимальный глобальный хук клавиатуры:
+    ///  • Детектит DoubleCopy (двойной Ctrl+C) — только событие, НИЧЕГО не блокирует.
+    ///  • НЕ трогает Ctrl+V, не реинжектит клавиши.
+    ///  • Игнорирует инъецированные события (SendInput/keybd_event).
+    /// </summary>
     public sealed class GlobalHotkeyService : IDisposable
     {
+        public static GlobalHotkeyService Instance { get; } = new();
+
         public event EventHandler? DoubleCopy;
-        public event EventHandler<PasteHoldContext>? PasteHoldStart;
-        public event EventHandler? PasteHoldEnd;
 
         private LowLevelKeyboardProc? _proc;
-        private IntPtr _hookId = IntPtr.Zero;
+        private nint _hookId;
 
-        // Config
-        private const int DoubleCopyWindowMs = 450;
+        // Настройки/состояние
+        private const int DoubleCopyWindowMs = 450; // окно между двумя Ctrl+C
+        private DateTime _lastCtrlCUtc = DateTime.MinValue;
 
-        // State
-        private DateTime _lastCtrlC = DateTime.MinValue;
-        private bool _pasteHoldArmed;
-        private IntPtr _pasteHoldFg;
+        private GlobalHotkeyService() { }
 
         public void Install()
         {
-            if (_hookId != IntPtr.Zero) return;
+            if (_hookId != nint.Zero) return;
             _proc = HookCallback;
-            using var cur = Process.GetCurrentProcess();
-            using var mod = cur.MainModule!;
-            _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(mod.ModuleName), 0);
+            // Для WH_KEYBOARD_LL достаточно хендла текущего модуля
+            _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
             Logger.Info("GlobalHotkeyService hook installed.");
         }
 
@@ -37,88 +39,73 @@ namespace VisualBuffer.Services.Keyboard
         {
             try
             {
-                if (_hookId != IntPtr.Zero) UnhookWindowsHookEx(_hookId);
-                _hookId = IntPtr.Zero;
+                if (_hookId != nint.Zero)
+                {
+                    UnhookWindowsHookEx(_hookId);
+                    _hookId = nint.Zero;
+                    Logger.Info("GlobalHotkeyService hook uninstalled.");
+                }
                 _proc = null;
             }
-            catch { /* never throw */ }
+            catch { /* never throw из логгера */ }
         }
 
-        private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        // ===== Hook =====
+
+        private nint HookCallback(int nCode, nint wParam, nint lParam)
         {
-            if (nCode >= 0)
+            try
             {
-                var msg = (int)wParam;
-                var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-
-                // ВАЖНО: пропускаем И НЕ УЧИТЫВАЕМ инжектированные события
-                bool injected =
-                    (data.flags & LLKHF_INJECTED) != 0 ||
-                    (data.flags & LLKHF_LOWER_IL_INJECTED) != 0;
-
-                // мы ничего не блокируем вообще — всегда CallNextHookEx
-                // но для своей логики учитываем только НЕинжектированные события
-                if (!injected)
+                if (nCode >= 0)
                 {
-                    bool isCtrlDown = IsCtrlPressed();
-                    bool isKeyDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-                    bool isKeyUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                    int msg = (int)wParam;
+                    var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
 
-                    // Double Copy: дважды Ctrl+C подряд в узком окне времени
-                    if (isKeyDown && isCtrlDown && data.vkCode == VK_C)
+                    // Игнорируем инъецированные
+                    const int LLKHF_INJECTED = 0x10;
+                    const int LLKHF_LOWER_IL_INJECTED = 0x02;
+                    bool injected = (data.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
+                    if (!injected)
                     {
-                        var now = DateTime.UtcNow;
-                        if ((now - _lastCtrlC).TotalMilliseconds <= DoubleCopyWindowMs)
-                        {
-                            _lastCtrlC = DateTime.MinValue;
-                            try { DoubleCopy?.Invoke(this, EventArgs.Empty); } catch { }
-                        }
-                        else
-                        {
-                            _lastCtrlC = now;
-                        }
-                    }
+                        bool isKeyDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                        // читаем текущее состояние Ctrl глобально
+                        bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 
-                    // PasteHold — по вашему желанию: пример — зажатый Ctrl+V
-                    if (isKeyDown && isCtrlDown && data.vkCode == VK_V && !_pasteHoldArmed)
-                    {
-                        _pasteHoldArmed = true;
-                        _pasteHoldFg = GetForegroundWindow();
-                        try { PasteHoldStart?.Invoke(this, new PasteHoldContext(_pasteHoldFg)); } catch { }
-                    }
-                    if (isKeyUp && data.vkCode == VK_V && _pasteHoldArmed)
-                    {
-                        _pasteHoldArmed = false;
-                        try { PasteHoldEnd?.Invoke(this, EventArgs.Empty); } catch { }
+                        if (isKeyDown && ctrlDown && data.vkCode == VK_C)
+                        {
+                            var now = DateTime.UtcNow;
+                            if ((now - _lastCtrlCUtc).TotalMilliseconds <= DoubleCopyWindowMs)
+                            {
+                                _lastCtrlCUtc = DateTime.MinValue;
+                                try { DoubleCopy?.Invoke(this, EventArgs.Empty); } catch { }
+                                Logger.Info("DoubleCopy detected.");
+                            }
+                            else
+                            {
+                                _lastCtrlCUtc = now;
+                            }
+                        }
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                Logger.Error("Exception in GlobalHotkeyService.HookCallback.", ex);
+            }
 
-            // НИЧЕГО НЕ БЛОКИРУЕМ
-            return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+            // НИКОГДА не блокируем — пропускаем дальше
+            return CallNextHookEx(_hookId, nCode, wParam, lParam);
         }
 
-        public sealed record PasteHoldContext(IntPtr ForegroundHwnd);
-
-        // Helpers
-        private static bool IsCtrlPressed()
-            => (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-
-        // Win32
+        // ===== Win32 =====
 
         private const int WH_KEYBOARD_LL = 13;
 
         private const int WM_KEYDOWN = 0x0100;
-        private const int WM_KEYUP = 0x0101;
         private const int WM_SYSKEYDOWN = 0x0104;
-        private const int WM_SYSKEYUP = 0x0105;
 
         private const int VK_CONTROL = 0x11;
         private const int VK_C = 0x43;
-        private const int VK_V = 0x56;
-
-        private const int LLKHF_INJECTED = 0x10;
-        private const int LLKHF_LOWER_IL_INJECTED = 0x02;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct KBDLLHOOKSTRUCT
@@ -127,16 +114,15 @@ namespace VisualBuffer.Services.Keyboard
             public int scanCode;
             public int flags;
             public int time;
-            public IntPtr dwExtraInfo;
+            public nint dwExtraInfo;
         }
 
-        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+        private delegate nint LowLevelKeyboardProc(int nCode, nint wParam, nint lParam);
 
-        [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-        [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-        [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-        [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string? lpModuleName);
-        [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] private static extern short GetKeyState(int nVirtKey);
+        [DllImport("user32.dll")] private static extern nint SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, nint hMod, uint dwThreadId);
+        [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(nint hhk);
+        [DllImport("user32.dll")] private static extern nint CallNextHookEx(nint hhk, int nCode, nint wParam, nint lParam);
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto)] private static extern nint GetModuleHandle(string? lpModuleName);
+        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
     }
 }

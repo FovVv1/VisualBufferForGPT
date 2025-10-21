@@ -1,19 +1,18 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
-using System.Windows.Interop;
-
 using VisualBuffer.BubbleFX.Models;
 using VisualBuffer.BubbleFX.UI.Bubble;
-using VisualBuffer.BubbleFX.UI.Insert;   // InsertEngine
-using VisualBuffer.BubbleFX.Utils;       // DpiUtil
-using VisualBuffer.Diagnostics;          // Log
-using VisualBuffer.Services;             // DragHelper
+using VisualBuffer.BubbleFX.UI.Insert;
+using VisualBuffer.BubbleFX.Utils;
+using VisualBuffer.Diagnostics;
+using VisualBuffer.Services;
 
 namespace VisualBuffer.BubbleFX.Controls
 {
@@ -26,7 +25,6 @@ namespace VisualBuffer.BubbleFX.Controls
         private BubbleHostCanvas? _host;
         private Point _localGrab;
 
-        // hover / arm
         private readonly DispatcherTimer _hoverWatch;
         private Point _lastScreen;
         private DateTime _lastMoveAtUtc;
@@ -67,7 +65,6 @@ namespace VisualBuffer.BubbleFX.Controls
                 VM.IsFloating = true;
             }
 
-            // drag: down — на Header; move/up — на всём контроле
             Header.MouseLeftButtonDown += Header_MouseLeftButtonDown;
             PreviewMouseMove += Root_MouseMove;
             PreviewMouseLeftButtonUp += Root_MouseLeftButtonUp;
@@ -97,11 +94,10 @@ namespace VisualBuffer.BubbleFX.Controls
             return null;
         }
 
-        // ======== Drag lifecycle ========
+        // ===== Drag lifecycle =====
 
         private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            // не стартуем drag, если начало — с кнопки закрытия
             if (IsWithin((DependencyObject)e.OriginalSource, CloseBtn))
                 return;
 
@@ -176,12 +172,11 @@ namespace VisualBuffer.BubbleFX.Controls
                 VM.Y = Canvas.GetTop(this);
             }
 
-            // === вставка строго на отпускание, если «вооружены» ===
+            // вставка строго на отпускание, если «вооружены»
             if (_hoverArmed)
             {
                 bool ok = TryPasteAtCursorThroughBubble(VM.ContentText ?? string.Empty);
-                if (ok)
-                    RequestClose();
+                if (ok) RequestClose();
             }
 
             ArmReset();
@@ -190,7 +185,7 @@ namespace VisualBuffer.BubbleFX.Controls
             if (wasTap) e.Handled = true;
         }
 
-        // ======== Hover watch: вооружение по паузе ========
+        // ===== Hover watch =====
 
         private void HoverWatch_Tick(object? sender, EventArgs e)
         {
@@ -201,14 +196,13 @@ namespace VisualBuffer.BubbleFX.Controls
             var idleMs = (DateTime.UtcNow - _lastMoveAtUtc).TotalMilliseconds;
             if (idleMs < HoverMs) return;
 
-            // достаточно простой критерий: простояли ≥1s — «вооружены»
             _hoverArmed = true;
             Logger.Info("Bubble: Paste armed");
         }
 
         private void ArmReset() => _hoverArmed = false;
 
-        // ======== Tear-out / Tear-in ========
+        // ===== Tear-out / Tear-in =====
 
         private void TryTearOut(Point screenPoint)
         {
@@ -262,7 +256,7 @@ namespace VisualBuffer.BubbleFX.Controls
             }
         }
 
-        // ======== Закрытие ========
+        // ===== Закрытие =====
 
         private void RequestClose()
         {
@@ -281,14 +275,12 @@ namespace VisualBuffer.BubbleFX.Controls
             }
         }
 
-        // ======== Ключевой момент: вызвать PasteAtCursorFocus «сквозь» пузырь ========
+        // ===== Ключевой момент: вставка «сквозь» пузырь =====
 
         private bool TryPasteAtCursorThroughBubble(string text)
         {
             try
             {
-                // Если плавающий — на мгновение делаем окно прозрачным для хит-теста,
-                // чтобы InsertEngine увидел «подложку» по WindowFromPoint.
                 if (_floatWindow is not null)
                 {
                     var hwndThis = new WindowInteropHelper(_floatWindow).Handle;
@@ -299,6 +291,15 @@ namespace VisualBuffer.BubbleFX.Controls
                         {
                             var newEx = new IntPtr(origEx.ToInt64() | WS_EX_TRANSPARENT | WS_EX_LAYERED);
                             SetWindowLongPtrSafe(hwndThis, GWL_EXSTYLE, newEx);
+                            // диагностика: кто реально под курсором
+                            if (GetCursorPos(out POINT_NATIVE pt))
+                            {
+                                var h = WindowFromPoint(pt);
+                                var top = GetAncestor(h, GA_ROOT);
+                                var clsTop = ClassOf(top);
+                                var clsH = ClassOf(h);
+                                Logger.Info($"Bubble: UnderCursor hwnd=0x{h.ToInt64():X} top=0x{top.ToInt64():X} clsTop='{clsTop}' clsPoint='{clsH}'");
+                            }
 
                             InsertEngine.Instance.PasteAtCursorFocus(text);
                         }
@@ -314,11 +315,10 @@ namespace VisualBuffer.BubbleFX.Controls
                 }
                 else
                 {
-                    // На холсте — и так не topmost
                     InsertEngine.Instance.PasteAtCursorFocus(text);
                 }
 
-                return true; // считаем попытку успешной — InsertEngine делает фолбэки сам
+                return true;
             }
             catch (Exception ex)
             {
@@ -327,7 +327,7 @@ namespace VisualBuffer.BubbleFX.Controls
             }
         }
 
-        // ======== Утилиты ========
+        // ===== Helpers =====
 
         private static bool IsWithin(DependencyObject? src, FrameworkElement? target)
         {
@@ -343,17 +343,28 @@ namespace VisualBuffer.BubbleFX.Controls
             return dx * dx + dy * dy;
         }
 
-        // ======== Win32 ========
+        private static string ClassOf(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return "";
+            var sb = new StringBuilder(256);
+            return GetClassName(h, sb, sb.Capacity) != 0 ? sb.ToString() : "";
+        }
+
+        // ===== Win32 (только то, что реально нужно тут) =====
 
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TRANSPARENT = 0x00000020;
         private const int WS_EX_LAYERED = 0x00080000;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT { public int X; public int Y; }
+        private struct POINT_NATIVE { public int X; public int Y; }
 
-        [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
-        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT pt);
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT_NATIVE pt);
+        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT_NATIVE pt);
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int cap);
+
+        private const uint GA_ROOT = 2;
 
         private static IntPtr GetWindowLongPtrSafe(IntPtr hWnd, int nIndex)
             => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex));
