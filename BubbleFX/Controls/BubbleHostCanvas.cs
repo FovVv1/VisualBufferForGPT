@@ -1,31 +1,27 @@
-﻿using System;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using VisualBuffer.BubbleFX.Utils;
 
-
 namespace VisualBuffer.BubbleFX.Controls
 {
-    /// <summary>
-    /// Canvas hosting docked (non-floating) bubbles. Provides helpers for tear-out/tear-in.
-    /// </summary>
     public class BubbleHostCanvas : Canvas
     {
+        public static bool IsUsable(Visual v) => PresentationSource.FromVisual(v) != null;
+
         public bool IsScreenPointOverHost(Point screenPoint)
         {
+            if (!IsUsable(this)) return false;
             var p = PointFromScreen(DpiUtil.ScreenToWpf(this, screenPoint));
             var rect = new Rect(new Point(0, 0), RenderSize);
             return rect.Contains(p);
         }
 
-
         public Point ScreenToLocal(Point screenPoint)
         {
-            var local = PointFromScreen(DpiUtil.ScreenToWpf(this, screenPoint));
-            return local;
+            if (!IsUsable(this)) return new Point(-1, -1);
+            return PointFromScreen(DpiUtil.ScreenToWpf(this, screenPoint));
         }
-
 
         public void AddBubble(UIElement bubble, Point localTopLeft)
         {

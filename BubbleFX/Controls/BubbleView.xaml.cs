@@ -9,10 +9,10 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using VisualBuffer.BubbleFX.Models;
 using VisualBuffer.BubbleFX.UI.Bubble;
-using VisualBuffer.BubbleFX.UI.Insert;
-using VisualBuffer.BubbleFX.Utils;
-using VisualBuffer.Diagnostics;
-using VisualBuffer.Services;
+using VisualBuffer.BubbleFX.UI.Canvas;   // <-- ДОБАВИЛИ доступ к CanvasWindow
+using VisualBuffer.BubbleFX.UI.Insert;   // InsertEngine
+using VisualBuffer.BubbleFX.Utils;       // DpiUtil
+using VisualBuffer.Diagnostics;          // Logger
 
 namespace VisualBuffer.BubbleFX.Controls
 {
@@ -20,10 +20,15 @@ namespace VisualBuffer.BubbleFX.Controls
     {
         public BubbleViewModel VM => (BubbleViewModel)DataContext;
 
-        private readonly DragHelper _drag = new();
+        private readonly Services.DragHelper _drag = new();
         private BubbleWindow? _floatWindow;
         private BubbleHostCanvas? _host;
         private Point _localGrab;
+
+        private BubbleHostCanvas? _dockCandidate;
+        private Point _dockCandidateLocal;
+        private bool _tearOutCandidate;
+        private Point _tearOutScreen;
 
         private readonly DispatcherTimer _hoverWatch;
         private Point _lastScreen;
@@ -56,6 +61,7 @@ namespace VisualBuffer.BubbleFX.Controls
                 Canvas.SetTop(this, VM.Y);
                 Width = VM.Width;
                 Height = VM.Height;
+                VM.IsFloating = false;
             }
             else
             {
@@ -93,8 +99,6 @@ namespace VisualBuffer.BubbleFX.Controls
             }
             return null;
         }
-
-        // ===== Drag lifecycle =====
 
         private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -137,24 +141,52 @@ namespace VisualBuffer.BubbleFX.Controls
 
             if (VM.IsFloating)
             {
+                // двигать окно
                 var w = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
                 if (w is not null)
                 {
                     var (sx, sy) = DpiUtil.GetDpiScale(w);
                     w.Left = screen.X / sx - _localGrab.X;
-                    w.Top = screen.Y / sy - _localGrab.Y;
+                    w.Top  = screen.Y / sy - _localGrab.Y;
                 }
 
-                TryTearIn(screen);
+                // выбрать КАНДИДАТ на док
+                _dockCandidate = null;
+                var host = CanvasWindow.Instance?.HostElement;
+                if (host != null && BubbleHostCanvas.IsUsable(host) && host.IsScreenPointOverHost(screen))
+                {
+                    var pLocal = host.ScreenToLocal(screen);
+                    _dockCandidate = host;
+                    _dockCandidateLocal = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
+                    Logger.Info("Bubble: dock-candidate found");
+                }
             }
             else
             {
                 if (_host is not null)
                 {
-                    var hostLocal = _host.ScreenToLocal(screen);
-                    Canvas.SetLeft(this, hostLocal.X - _localGrab.X);
-                    Canvas.SetTop(this, hostLocal.Y - _localGrab.Y);
-                    TryTearOut(screen);
+                    // двигаем пузырь в хосте
+                    var hostLocalAtCursor = _host.ScreenToLocal(screen);
+                    var newTopLeft = new Point(hostLocalAtCursor.X - _localGrab.X,
+                                               hostLocalAtCursor.Y - _localGrab.Y);
+                    Canvas.SetLeft(this, newTopLeft.X);
+                    Canvas.SetTop(this,  newTopLeft.Y);
+
+                    // кандидат на отстыковку: рамка пузыря вышла за «safe»
+                    const double marginPx = 20;
+                    var hostRect = new Rect(new Point(0, 0), _host.RenderSize);
+                    var safe = Rect.Inflate(hostRect, -marginPx, -marginPx);
+                    var bubbleRect = new Rect(newTopLeft, new Size(ActualWidth, ActualHeight));
+
+                    if (!safe.Contains(bubbleRect))
+                    {
+                        _tearOutCandidate = true;
+                        _tearOutScreen = _host.PointToScreen(newTopLeft);
+                    }
+                    else
+                    {
+                        _tearOutCandidate = false;
+                    }
                 }
             }
         }
@@ -166,13 +198,56 @@ namespace VisualBuffer.BubbleFX.Controls
             var wasTap = _drag.IsTapNow();
             _hoverWatch.Stop();
 
-            if (_drag.IsDragging && !VM.IsFloating && _host is not null)
+            // финализируем reparent
+            if (VM.IsFloating)
             {
-                VM.X = Canvas.GetLeft(this);
-                VM.Y = Canvas.GetTop(this);
+                if (_dockCandidate != null)
+                {
+                    if (_floatWindow is not null)
+                    {
+                        _floatWindow.Content = null;
+                        _floatWindow.Close();
+                        _floatWindow = null;
+                    }
+
+                    _dockCandidate.AddBubble(this, _dockCandidateLocal);
+                    _host = _dockCandidate;
+                    VM.IsFloating = false;
+                    Logger.Info("Bubble: docked into host");
+                }
+            }
+            else
+            {
+                if (_tearOutCandidate)
+                {
+                    _host?.Children.Remove(this);
+                    _host = null;
+
+                    _floatWindow = new BubbleWindow
+                    {
+                        Owner = Application.Current.MainWindow,
+                        Content = this,
+                        Topmost = true
+                    };
+
+                    var (sx, sy) = DpiUtil.GetDpiScale(_floatWindow);
+                    _floatWindow.Left = _tearOutScreen.X / sx;
+                    _floatWindow.Top  = _tearOutScreen.Y / sy;
+                    _floatWindow.Show();
+
+                    VM.IsFloating = true;
+                    Logger.Info("Bubble: undocked to window");
+                }
+                else if (_drag.IsDragging && _host is not null)
+                {
+                    VM.X = Canvas.GetLeft(this);
+                    VM.Y = Canvas.GetTop(this);
+                }
             }
 
-            // вставка строго на отпускание, если «вооружены»
+            _dockCandidate = null;
+            _tearOutCandidate = false;
+
             if (_hoverArmed)
             {
                 bool ok = TryPasteAtCursorThroughBubble(VM.ContentText ?? string.Empty);
@@ -184,98 +259,6 @@ namespace VisualBuffer.BubbleFX.Controls
 
             if (wasTap) e.Handled = true;
         }
-
-        // ===== Hover watch =====
-
-        private void HoverWatch_Tick(object? sender, EventArgs e)
-        {
-            if (!_drag.IsDragging) return;
-            if (!VM.IsFloating) return;
-            if (_hoverArmed) return;
-
-            var idleMs = (DateTime.UtcNow - _lastMoveAtUtc).TotalMilliseconds;
-            if (idleMs < HoverMs) return;
-
-            _hoverArmed = true;
-            Logger.Info("Bubble: Paste armed");
-        }
-
-        private void ArmReset() => _hoverArmed = false;
-
-        // ===== Tear-out / Tear-in =====
-
-        private void TryTearOut(Point screenPoint)
-        {
-            if (_host is null || VM.IsFloating) return;
-
-            const double marginPx = 20;
-            var local = _host.ScreenToLocal(screenPoint);
-            var rect = new Rect(new Point(0, 0), _host.RenderSize);
-            var safe = Rect.Inflate(rect, -marginPx, -marginPx);
-
-            if (!safe.Contains(local))
-            {
-                _host.Children.Remove(this);
-
-                _floatWindow = new BubbleWindow
-                {
-                    Owner = Application.Current.MainWindow,
-                    Content = this,
-                    Topmost = true
-                };
-
-                var (sx, sy) = DpiUtil.GetDpiScale(_floatWindow);
-                _floatWindow.Left = screenPoint.X / sx - _localGrab.X;
-                _floatWindow.Top = screenPoint.Y / sy - _localGrab.Y;
-
-                _floatWindow.Show();
-                VM.IsFloating = true;
-            }
-        }
-
-        private void TryTearIn(Point screenPoint)
-        {
-            if (_host is null || !VM.IsFloating) return;
-
-            if (_host.IsScreenPointOverHost(screenPoint))
-            {
-                if (_floatWindow is not null)
-                {
-                    _floatWindow.Content = null;
-                    _floatWindow.Close();
-                    _floatWindow = null;
-                }
-
-                var hostLocal = _host.ScreenToLocal(screenPoint);
-                _host.AddBubble(this, new Point(hostLocal.X - _localGrab.X, hostLocal.Y - _localGrab.Y));
-
-                VM.IsFloating = false;
-                VM.X = Canvas.GetLeft(this);
-                VM.Y = Canvas.GetTop(this);
-                ArmReset();
-            }
-        }
-
-        // ===== Закрытие =====
-
-        private void RequestClose()
-        {
-            if (VM.IsFloating)
-            {
-                if (_floatWindow is not null)
-                {
-                    _floatWindow.Content = null;
-                    _floatWindow.Close();
-                    _floatWindow = null;
-                }
-            }
-            else
-            {
-                _host?.Children.Remove(this);
-            }
-        }
-
-        // ===== Ключевой момент: вставка «сквозь» пузырь =====
 
         private bool TryPasteAtCursorThroughBubble(string text)
         {
@@ -291,14 +274,14 @@ namespace VisualBuffer.BubbleFX.Controls
                         {
                             var newEx = new IntPtr(origEx.ToInt64() | WS_EX_TRANSPARENT | WS_EX_LAYERED);
                             SetWindowLongPtrSafe(hwndThis, GWL_EXSTYLE, newEx);
-                            // диагностика: кто реально под курсором
-                            if (GetCursorPos(out POINT_NATIVE pt))
+                            System.Threading.Thread.Sleep(1);
+
+                            // диагностический лог: кто под курсором
+                            if (GetCursorPos(out POINT pt))
                             {
                                 var h = WindowFromPoint(pt);
                                 var top = GetAncestor(h, GA_ROOT);
-                                var clsTop = ClassOf(top);
-                                var clsH = ClassOf(h);
-                                Logger.Info($"Bubble: UnderCursor hwnd=0x{h.ToInt64():X} top=0x{top.ToInt64():X} clsTop='{clsTop}' clsPoint='{clsH}'");
+                                Logger.Info($"Bubble: UnderCursor hwnd=0x{h.ToInt64():X} top=0x{top.ToInt64():X} clsTop='{ClassOf(top)}' clsPoint='{ClassOf(h)}'");
                             }
 
                             InsertEngine.Instance.PasteAtCursorFocus(text);
@@ -327,7 +310,20 @@ namespace VisualBuffer.BubbleFX.Controls
             }
         }
 
-        // ===== Helpers =====
+        private void HoverWatch_Tick(object? sender, EventArgs e)
+        {
+            if (!_drag.IsDragging) return;
+            if (!VM.IsFloating) return;
+            if (_hoverArmed) return;
+
+            var idleMs = (DateTime.UtcNow - _lastMoveAtUtc).TotalMilliseconds;
+            if (idleMs < HoverMs) return;
+
+            _hoverArmed = true;
+            Logger.Info("Bubble: Paste armed");
+        }
+
+        private void ArmReset() => _hoverArmed = false;
 
         private static bool IsWithin(DependencyObject? src, FrameworkElement? target)
         {
@@ -343,6 +339,36 @@ namespace VisualBuffer.BubbleFX.Controls
             return dx * dx + dy * dy;
         }
 
+        private void RequestClose()
+        {
+            if (VM.IsFloating)
+            {
+                if (_floatWindow is not null)
+                {
+                    _floatWindow.Content = null;
+                    _floatWindow.Close();
+                    _floatWindow = null;
+                }
+            }
+            else
+            {
+                _host?.Children.Remove(this);
+            }
+        }
+
+
+
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
+        private const int WS_EX_LAYERED = 0x00080000;
+
+        [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X; public int Y; }
+
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
+        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT pt);
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int cap);
+
         private static string ClassOf(IntPtr h)
         {
             if (h == IntPtr.Zero) return "";
@@ -350,38 +376,18 @@ namespace VisualBuffer.BubbleFX.Controls
             return GetClassName(h, sb, sb.Capacity) != 0 ? sb.ToString() : "";
         }
 
-        // ===== Win32 (только то, что реально нужно тут) =====
-
-        private const int GWL_EXSTYLE = -20;
-        private const int WS_EX_TRANSPARENT = 0x00000020;
-        private const int WS_EX_LAYERED = 0x00080000;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct POINT_NATIVE { public int X; public int Y; }
-
-        [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT_NATIVE pt);
-        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT_NATIVE pt);
-        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
-        [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int cap);
-
-        private const uint GA_ROOT = 2;
-
         private static IntPtr GetWindowLongPtrSafe(IntPtr hWnd, int nIndex)
             => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex));
 
         private static IntPtr SetWindowLongPtrSafe(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
             => IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong) : new IntPtr(SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32()));
 
-        [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
-        private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLong")] private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLong")] private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")] private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
-        [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
-        private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
-
-        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
-        private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
-
-        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
-        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+        private const uint GA_ROOT = 2;
     }
 }
+

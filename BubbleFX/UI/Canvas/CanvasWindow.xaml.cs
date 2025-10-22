@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.Windows;
+using VisualBuffer.BubbleFX.Controls;
 using VisualBuffer.BubbleFX.UI.Bubble;
 using VisualBuffer.BubbleFX.UI.Insert;
 
@@ -7,19 +8,21 @@ namespace VisualBuffer.BubbleFX.UI.Canvas
 {
     public partial class CanvasWindow : Window
     {
+        public static CanvasWindow? Instance { get; private set; }
+        public BubbleHostCanvas HostElement => Host;
+
         private readonly ObservableCollection<string> _items = new();
 
         public CanvasWindow()
         {
             InitializeComponent();
+            Instance = this;
             CardsPanel.ItemsSource = _items;
         }
 
-        // холст показывается без активации (ShowActivated=False), чтобы не ломать drag пузыря
         public void ShowOverlayHold()
         {
-            Show();
-            // НЕ вызывать Activate()
+            Show();  // ни Activate() ни Focus() — как и было
         }
 
         public void AddItem(string text)
@@ -28,7 +31,6 @@ namespace VisualBuffer.BubbleFX.UI.Canvas
                 _items.Insert(0, text);
         }
 
-        // проверка: попадает ли экранная точка в клиентскую область окна
         public bool IsScreenPointInside(int x, int y)
         {
             var local = PointFromScreen(new Point(x, y));

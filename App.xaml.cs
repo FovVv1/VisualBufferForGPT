@@ -11,6 +11,7 @@ namespace VisualBuffer
     public partial class App : Application
     {
         // Холст можно оставить, если он тебе ещё нужен для другого UI
+        private GlobalHotkeyService? _hotkeys;
         private Services.Clipboard.ClipboardListener? _clipboard;
         private BubbleFX.UI.Canvas.CanvasWindow? _canvas;
 
@@ -24,30 +25,49 @@ namespace VisualBuffer
             _canvas = new BubbleFX.UI.Canvas.CanvasWindow();
             _canvas.Hide();
 
-            // слушатель буфера — для кэша
             _clipboard = new Services.Clipboard.ClipboardListener();
 
-            // НОВОЕ: синглтон + Install(), без new GlobalHotkeyService()
-            GlobalHotkeyService.Instance.Install();
+            _hotkeys = GlobalHotkeyService.Instance;
+            _hotkeys.Install();
 
-            // Пузырь по двойному Ctrl+C (в UI-поток)
-            GlobalHotkeyService.Instance.DoubleCopy += (_, __) =>
+            // Пузырь по Ctrl+C×2
+            _hotkeys.DoubleCopy += (_, __) =>
             {
                 try
                 {
                     var last = Services.Clipboard.ClipboardCache.Instance.LastText;
                     if (!string.IsNullOrEmpty(last))
-                    {
-                        Dispatcher.BeginInvoke(() =>
-                        {
-                            BubbleManager.Instance.Show(last!);
-                        });
-                    }
+                        Dispatcher.BeginInvoke(() => BubbleFX.UI.Bubble.BubbleManager.Instance.Show(last!));
                 }
-                catch (Exception ex)
+                catch (Exception ex) { Logger.Error("DoubleCopy handler failed.", ex); }
+            };
+
+            // Холст по удержанию Ctrl+Alt
+            _hotkeys.CanvasShow += (_, ctx) =>
+            {
+                try
                 {
-                    Logger.Error("DoubleCopy handler failed.", ex);
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        // чтобы вставка с карточки вернулась в исходное окно
+                        InsertEngine.Instance.BeginDeferredPaste(ctx.ForegroundHwnd);
+                        _canvas!.ShowOverlayHold();
+                    });
                 }
+                catch (Exception ex) { Logger.Error("CanvasShow handler failed.", ex); }
+            };
+
+            _hotkeys.CanvasHide += (_, __) =>
+            {
+                try
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        InsertEngine.Instance.CancelDeferredPaste();
+                        _canvas!.Hide();
+                    });
+                }
+                catch (Exception ex) { Logger.Error("CanvasHide handler failed.", ex); }
             };
 
             Logger.Info("App Startup completed.");
@@ -55,7 +75,7 @@ namespace VisualBuffer
 
         protected override void OnExit(ExitEventArgs e)
         {
-            try { GlobalHotkeyService.Instance.Dispose(); } catch { }
+            _hotkeys?.Dispose();
             _clipboard?.Dispose();
             base.OnExit(e);
             Logger.Info("=== App exit ===");
