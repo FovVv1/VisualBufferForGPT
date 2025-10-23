@@ -4,40 +4,42 @@ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
 mc:Ignorable="d" MinWidth="220" MinHeight="170">
-    <Border  x:Name="Root" CornerRadius="20" Background="#1AFFFFFF"  BorderBrush="White" BorderThickness="1" >
+    <Border  x:Name="Root" CornerRadius="20" Background="Transparent"  BorderBrush="Transparent" BorderThickness="2" >
         
         <Grid x:Name="Header" Background="Transparent" >
             <Grid.RowDefinitions>
                 <RowDefinition Height="36"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="0.2*"/>
+            </Grid.ColumnDefinitions>
 
 
-            <!-- Header / drag handle -->
-            <Grid  Grid.Row="0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Grid.Row="0" CornerRadius="20,0,0,0" Background="#CC0A1224">
 
-
-
-                <Button Grid.Column="1" Background="#1AFFFFFF" x:Name="CloseBtn" Content="✕" Width="28" Height="24" Margin="0,6,6,6"
-                                        ToolTip="Close"
-                                        VerticalAlignment="Center" Click="CloseBtn_Click">
+                
+            </Border>
+            <Border Grid.Column="1" Grid.Row="0" CornerRadius="0,20,0,0" Background="#CCC83A3A" BorderBrush="#3DC83A3A" BorderThickness="00">
+                <Button x:Name="CloseBtn" Background="Transparent" Content="✕" Margin="0"
+                        ToolTip="Close"
+                        VerticalAlignment="Stretch" 
+                        HorizontalAlignment="Stretch"
+                        Click="CloseBtn_Click">         
                     <Button.Style>
                         <Style TargetType="Button">
-                            <Setter Property="BorderBrush"  Value="White" />
-                            <Setter Property="BorderThickness"  Value="1" />
+                            <Setter Property="BorderBrush"  Value="Transparent" />
                         </Style>
                     </Button.Style>
 
                 </Button>
-            </Grid>
+            </Border>
+            
 
 
             <!-- Content placeholder -->
-            <Border Grid.Row="1" CornerRadius="0,0,0,0" Padding="6">
+            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" CornerRadius="0,0,20,20" Background="#CC1A1F2B" Padding="6">
                 <ScrollViewer VerticalScrollBarVisibility="Hidden" CanContentScroll="True"  IsHitTestVisible="False">
                         <TextBlock Foreground="#C8D0E0"
                        TextWrapping="Wrap"
