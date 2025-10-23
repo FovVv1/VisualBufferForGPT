@@ -3,9 +3,10 @@ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-mc:Ignorable="d" MinWidth="220" MinHeight="120">
-    <Border x:Name="Root" CornerRadius="12" Background="#1A1F2B" BorderBrush="#2E3440" BorderThickness="1" >
-        <Grid>
+mc:Ignorable="d" MinWidth="220" MinHeight="170">
+    <Border  x:Name="Root" CornerRadius="20" Background="#1AFFFFFF"  BorderBrush="White" BorderThickness="1" >
+        
+        <Grid x:Name="Header" Background="Transparent" >
             <Grid.RowDefinitions>
                 <RowDefinition Height="36"/>
                 <RowDefinition Height="*"/>
@@ -13,23 +14,36 @@ mc:Ignorable="d" MinWidth="220" MinHeight="120">
 
 
             <!-- Header / drag handle -->
-            <Grid x:Name="Header" Grid.Row="0" Background="#232938" Cursor="SizeAll">
+            <Grid  Grid.Row="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="{Binding Title}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#E6EEF7"/>
-                <Button Grid.Column="1" x:Name="CloseBtn" Content="✕" Width="28" Height="24" Margin="0,6,6,6"
-ToolTip="Close"
-VerticalAlignment="Center"/>
+
+
+
+                <Button Grid.Column="1" Background="#1AFFFFFF" x:Name="CloseBtn" Content="✕" Width="28" Height="24" Margin="0,6,6,6"
+                                        ToolTip="Close"
+                                        VerticalAlignment="Center" Click="CloseBtn_Click">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="BorderBrush"  Value="White" />
+                            <Setter Property="BorderThickness"  Value="1" />
+                        </Style>
+                    </Button.Style>
+
+                </Button>
             </Grid>
 
 
             <!-- Content placeholder -->
-            <Border Grid.Row="1" Background="#0F1116" CornerRadius="0,0,12,12" Padding="12">
-                <TextBlock Foreground="#C8D0E0"
-               TextWrapping="Wrap"
-               Text="{Binding ContentText}"/>
+            <Border Grid.Row="1" CornerRadius="0,0,0,0" Padding="6">
+                <ScrollViewer VerticalScrollBarVisibility="Hidden" CanContentScroll="True"  IsHitTestVisible="False">
+                        <TextBlock Foreground="#C8D0E0"
+                       TextWrapping="Wrap"
+                       FontSize="16"
+                       Text="{Binding ContentText}"/>
+                </ScrollViewer>
             </Border>
 
         </Grid>

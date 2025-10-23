@@ -134,23 +134,23 @@ namespace VisualBuffer.BubbleFX.Controls
 
             if (Distance2(screen, _lastScreen) > MoveSlopPx * MoveSlopPx)
             {
-                _lastScreen = screen;
+                _lastScreen = screen;                   // <— актуальная экранная точка мыши
                 _lastMoveAtUtc = DateTime.UtcNow;
                 ArmReset();
             }
 
             if (VM.IsFloating)
             {
-                // двигать окно
+                // двигаем окно
                 var w = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
                 if (w is not null)
                 {
                     var (sx, sy) = DpiUtil.GetDpiScale(w);
                     w.Left = screen.X / sx - _localGrab.X;
-                    w.Top  = screen.Y / sy - _localGrab.Y;
+                    w.Top = screen.Y / sy - _localGrab.Y;
                 }
 
-                // выбрать КАНДИДАТ на док
+                // выбираем КАНДИДАТ на док, но НЕ докуем пока
                 _dockCandidate = null;
                 var host = CanvasWindow.Instance?.HostElement;
                 if (host != null && BubbleHostCanvas.IsUsable(host) && host.IsScreenPointOverHost(screen))
@@ -158,21 +158,20 @@ namespace VisualBuffer.BubbleFX.Controls
                     var pLocal = host.ScreenToLocal(screen);
                     _dockCandidate = host;
                     _dockCandidateLocal = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
-                    Logger.Info("Bubble: dock-candidate found");
                 }
             }
             else
             {
                 if (_host is not null)
                 {
-                    // двигаем пузырь в хосте
+                    // двигаем внутри холста
                     var hostLocalAtCursor = _host.ScreenToLocal(screen);
                     var newTopLeft = new Point(hostLocalAtCursor.X - _localGrab.X,
-                                               hostLocalAtCursor.Y - _localGrab.Y);
+                                                      hostLocalAtCursor.Y - _localGrab.Y);
                     Canvas.SetLeft(this, newTopLeft.X);
-                    Canvas.SetTop(this,  newTopLeft.Y);
+                    Canvas.SetTop(this, newTopLeft.Y);
 
-                    // кандидат на отстыковку: рамка пузыря вышла за «safe»
+                    // === НЕМЕДЛЕННЫЙ АН-ДОК ПРИ ВЫХОДЕ ЗА SAFE-РАМКУ ===
                     const double marginPx = 20;
                     var hostRect = new Rect(new Point(0, 0), _host.RenderSize);
                     var safe = Rect.Inflate(hostRect, -marginPx, -marginPx);
@@ -180,12 +179,26 @@ namespace VisualBuffer.BubbleFX.Controls
 
                     if (!safe.Contains(bubbleRect))
                     {
-                        _tearOutCandidate = true;
-                        _tearOutScreen = _host.PointToScreen(newTopLeft);
-                    }
-                    else
-                    {
-                        _tearOutCandidate = false;
+                        // снимаем из холста и сразу переносим в отдельное окно
+                        _host.Children.Remove(this);
+                        var screenTL = _host.PointToScreen(newTopLeft);
+                        _host = null;
+
+                        _floatWindow = new BubbleWindow
+                        {
+                            Owner = Application.Current.MainWindow,
+                            Content = this,
+                            Topmost = true
+                        };
+
+                        var (sx, sy) = DpiUtil.GetDpiScale(_floatWindow);
+                        _floatWindow.Left = screenTL.X / sx;
+                        _floatWindow.Top = screenTL.Y / sy;
+                        _floatWindow.Show();
+                        VM.IsFloating = true;
+
+                        // продолжаем захват после репарента, чтобы drag не «прыгнул»
+                        if (!IsMouseCaptured) CaptureMouse();
                     }
                 }
             }
@@ -198,11 +211,17 @@ namespace VisualBuffer.BubbleFX.Controls
             var wasTap = _drag.IsTapNow();
             _hoverWatch.Stop();
 
-            // финализируем reparent
+            // ===== ФИНАЛИЗАЦИЯ ДОКА =====
             if (VM.IsFloating)
             {
                 if (_dockCandidate != null)
                 {
+                    // пересчитываем точку из ПОСЛЕДНЕЙ экранной координаты мыши
+                    var host = _dockCandidate;
+                    var pLocal = host.ScreenToLocal(_lastScreen);
+                    var targetTL = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
+
+                    // закрываем окно и добавляем в хост
                     if (_floatWindow is not null)
                     {
                         _floatWindow.Content = null;
@@ -210,35 +229,24 @@ namespace VisualBuffer.BubbleFX.Controls
                         _floatWindow = null;
                     }
 
-                    _dockCandidate.AddBubble(this, _dockCandidateLocal);
-                    _host = _dockCandidate;
+                    host.AddBubble(this, targetTL);
+                    host.UpdateLayout(); // на всякий случай
+
+                    // фиксируем точку ЯВНО и сохраняем в VM
+                    Canvas.SetLeft(this, targetTL.X);
+                    Canvas.SetTop(this, targetTL.Y);
+                    VM.X = targetTL.X;
+                    VM.Y = targetTL.Y;
+
+                    _host = host;
                     VM.IsFloating = false;
-                    Logger.Info("Bubble: docked into host");
+                    Panel.SetZIndex(this, short.MaxValue - 1); // поверх карточек
                 }
             }
             else
             {
-                if (_tearOutCandidate)
-                {
-                    _host?.Children.Remove(this);
-                    _host = null;
-
-                    _floatWindow = new BubbleWindow
-                    {
-                        Owner = Application.Current.MainWindow,
-                        Content = this,
-                        Topmost = true
-                    };
-
-                    var (sx, sy) = DpiUtil.GetDpiScale(_floatWindow);
-                    _floatWindow.Left = _tearOutScreen.X / sx;
-                    _floatWindow.Top  = _tearOutScreen.Y / sy;
-                    _floatWindow.Show();
-
-                    VM.IsFloating = true;
-                    Logger.Info("Bubble: undocked to window");
-                }
-                else if (_drag.IsDragging && _host is not null)
+                // закрепляем позицию внутри хоста
+                if (_drag.IsDragging && _host is not null)
                 {
                     VM.X = Canvas.GetLeft(this);
                     VM.Y = Canvas.GetTop(this);
@@ -246,8 +254,8 @@ namespace VisualBuffer.BubbleFX.Controls
             }
 
             _dockCandidate = null;
-            _tearOutCandidate = false;
 
+            // вставка по «arm»
             if (_hoverArmed)
             {
                 bool ok = TryPasteAtCursorThroughBubble(VM.ContentText ?? string.Empty);
@@ -256,7 +264,6 @@ namespace VisualBuffer.BubbleFX.Controls
 
             ArmReset();
             _drag.Reset();
-
             if (wasTap) e.Handled = true;
         }
 
@@ -388,6 +395,11 @@ namespace VisualBuffer.BubbleFX.Controls
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
         private const uint GA_ROOT = 2;
+
+        private void CloseBtn_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
     }
 }
 
