@@ -5,28 +5,48 @@ xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
 mc:Ignorable="d" MinWidth="220" MinHeight="170">
     <Border  x:Name="Root" CornerRadius="20" Background="Transparent"  BorderBrush="Transparent" BorderThickness="2" >
-        
+
         <Grid x:Name="Header" Background="Transparent" >
             <Grid.RowDefinitions>
-                <RowDefinition Height="36"/>
+                <RowDefinition Height="25"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="30" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="0.2*"/>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="30" />
             </Grid.ColumnDefinitions>
 
 
-            <Border Grid.Column="0" Grid.Row="0" CornerRadius="20,0,0,0" Background="#CC0A1224">
+            <Border Grid.Column="0" Grid.Row="0" Grid.RowSpan="1"  CornerRadius="15,0,0,0" Background="#669AA0A6" BorderBrush="#CC9AA0A6" BorderThickness="1,1,0,0">
+                <Image Source="/Resources/redPin3.png" RenderTransformOrigin="0.5,0.5" Margin="3,3,2,3" >
+                    <Image.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform/>
+                            <SkewTransform/>
+                            <RotateTransform Angle="0"/>
+                            <TranslateTransform/>
+                        </TransformGroup>
+                    </Image.RenderTransform>
+                </Image>
 
-                
             </Border>
-            <Border Grid.Column="1" Grid.Row="0" CornerRadius="0,20,0,0" Background="#CCC83A3A" BorderBrush="#3DC83A3A" BorderThickness="00">
-                <Button x:Name="CloseBtn" Background="Transparent" Content="✕" Margin="0"
+            <Border Grid.Column="1" Grid.Row="0" Grid.ColumnSpan="5"  CornerRadius="0,0,0,0" Background="#CC9AA0A6">
+                <TextBlock TextAlignment="Center" HorizontalAlignment="Left" Margin="30,0,0,0" VerticalAlignment="Center" FontSize="15" FontFamily="Cascadia Code" Foreground="Beige">
+                    Edit...
+                </TextBlock>
+            </Border>
+            <Border Grid.Column="6" Grid.Row="0" CornerRadius="0,15,0,0" Background="#CCC83A3A"  BorderBrush="#CC9AA0A6" BorderThickness="0,1,1,0">
+                <Button x:Name="CloseBtn" Background="Transparent" Content="✕" Margin="0" 
+                        Foreground="#CC9AA0A6"
                         ToolTip="Close"
                         VerticalAlignment="Stretch" 
                         HorizontalAlignment="Stretch"
-                        Click="CloseBtn_Click">         
+                        Click="CloseBtn_Click">
                     <Button.Style>
                         <Style TargetType="Button">
                             <Setter Property="BorderBrush"  Value="Transparent" />
@@ -35,16 +55,24 @@ mc:Ignorable="d" MinWidth="220" MinHeight="170">
 
                 </Button>
             </Border>
-            
+
 
 
             <!-- Content placeholder -->
-            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" CornerRadius="0,0,20,20" Background="#CC1A1F2B" Padding="6">
+            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="7" CornerRadius="0,0,15,15" BorderThickness="1,1,1,1" BorderBrush="#CC9AA0A6" Background="#999AA0A6" Padding="6">
+                <Border.Style>
+                    <Style>
+                        
+                    </Style>
+                </Border.Style>
                 <ScrollViewer VerticalScrollBarVisibility="Hidden" CanContentScroll="True"  IsHitTestVisible="False">
-                        <TextBlock Foreground="#C8D0E0"
+                    <TextBlock Foreground="Beige"
                        TextWrapping="Wrap"
-                       FontSize="16"
-                       Text="{Binding ContentText}"/>
+                       FontSize="13"
+                       FontWeight="Light"
+                       FontFamily="Cascadia Code"
+                       Text="{Binding ContentText}"
+                       Margin="5"/>
                 </ScrollViewer>
             </Border>
 
