@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "VisualBuffer": {
+      "commandName": "Project",
+      "workingDirectory": "E:\\VS Builds\\VisualBuffer"
+    }
+  }
+}

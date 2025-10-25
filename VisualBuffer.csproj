@@ -5,5 +5,35 @@
 		<UseWPF>true</UseWPF>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
+		<PlatformTarget>AnyCPU</PlatformTarget>
+		<BaseOutputPath>E:\VS Builds\VisualBuffer</BaseOutputPath>
 	</PropertyGroup>
+	<ItemGroup>
+	  <None Remove="Resources\blackPin.png" />
+	  <None Remove="Resources\redPin.png" />
+	  <None Remove="Resources\redPin2.png" />
+	  <None Remove="Resources\redPin3.png" />
+	  <None Remove="Resources\redPin4.png" />
+	  <None Remove="Resources\transparentPin.png" />
+	</ItemGroup>
+	<ItemGroup>
+	  <Resource Include="Resources\blackPin.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	  <Resource Include="Resources\redPin.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	  <Resource Include="Resources\redPin2.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	  <Resource Include="Resources\redPin3.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	  <Resource Include="Resources\redPin4.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	  <Resource Include="Resources\transparentPin.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	</ItemGroup>
 </Project>
