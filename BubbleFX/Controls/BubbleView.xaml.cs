@@ -10,10 +10,10 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using VisualBuffer.BubbleFX.Models;
 using VisualBuffer.BubbleFX.UI.Bubble;
-using VisualBuffer.BubbleFX.UI.Canvas;   // CanvasWindow, BubbleHostCanvas
-using VisualBuffer.BubbleFX.UI.Insert;   // InsertEngine
-using VisualBuffer.BubbleFX.Utils;       // DpiUtil
-using VisualBuffer.Diagnostics;          // Logger
+using VisualBuffer.BubbleFX.UI.Canvas;
+using VisualBuffer.BubbleFX.UI.Insert;
+using VisualBuffer.BubbleFX.Utils;
+using VisualBuffer.Diagnostics;
 
 namespace VisualBuffer.BubbleFX.Controls
 {
@@ -42,6 +42,19 @@ namespace VisualBuffer.BubbleFX.Controls
         // редактирование заголовка
         private bool _isTitleEditing = false;
         private string _titleBeforeEdit = "";
+
+        // прозрачность
+        private bool _isPointerOver;
+
+        // Базовые уровни прозрачности (чуть-чуть «дымка» в idle)
+        private const double OPACITY_IDLE = 0.5;
+        private const double OPACITY_HOVER = 1.00;
+        private const double OPACITY_DRAG = 0.25;
+
+        // При закреплении — ещё прозрачнее во всех состояниях
+        private const double OPACITY_PIN_IDLE = 0.2;
+        private const double OPACITY_PIN_HOVER = 0.2;
+        private const double OPACITY_PIN_DRAG = 0.2;
 
         private const int HoverMs = 1000;
         private const double MoveSlopPx = 3.0;
@@ -79,12 +92,17 @@ namespace VisualBuffer.BubbleFX.Controls
                 VM.IsFloating = true;
             }
 
-            // drag по всему пузырю
+            // drag за весь пузырь
             Root.MouseLeftButtonDown += Root_MouseLeftButtonDown;
             PreviewMouseMove += Root_MouseMove;
             PreviewMouseLeftButtonUp += Root_MouseLeftButtonUp;
 
+            // прозрачность по наведению
+            Root.MouseEnter += (_, __) => { _isPointerOver = true; UpdateOpacityState(); };
+            Root.MouseLeave += (_, __) => { _isPointerOver = false; UpdateOpacityState(); };
+
             UpdateLockVisual();
+            UpdateOpacityState(); // стартовый вид
         }
 
         private void OnUnloaded(object? s, RoutedEventArgs e)
@@ -92,6 +110,9 @@ namespace VisualBuffer.BubbleFX.Controls
             Root.MouseLeftButtonDown -= Root_MouseLeftButtonDown;
             PreviewMouseMove -= Root_MouseMove;
             PreviewMouseLeftButtonUp -= Root_MouseLeftButtonUp;
+
+            Root.MouseEnter -= (_, __) => { };
+            Root.MouseLeave -= (_, __) => { };
 
             _hoverWatch.Stop();
             _floatWindow = null;
@@ -114,6 +135,7 @@ namespace VisualBuffer.BubbleFX.Controls
         {
             _isLocked = !_isLocked;
             UpdateLockVisual();
+            UpdateOpacityState();
         }
 
         private void UpdateLockVisual()
@@ -123,18 +145,13 @@ namespace VisualBuffer.BubbleFX.Controls
                 : new Uri("pack://application:,,,/Resources/transparentPin.png");
             PinIcon.Source = new BitmapImage(uri);
 
-            // блокируем хедер/контент/крестик; пин — всегда кликабелен
+            // блокируем хедер/контент/крестик; пин — кликабелен всегда
             HeaderTitleArea.IsHitTestVisible = !_isLocked;
             CloseArea.IsHitTestVisible = !_isLocked;
             CloseBtn.IsEnabled = !_isLocked;
             ContentArea.IsHitTestVisible = !_isLocked;
 
-            double dim = _isLocked ? 0.9 : 1.0;
-            ContentArea.Opacity = dim;
-            HeaderTitleArea.Opacity = dim;
-            CloseArea.Opacity = dim;
-
-            // если залочили — гарантированно выходим из режима редактирования
+            // никаких локальных «димов» — прозрачность управляется едино через Root.Opacity
             if (_isLocked && _isTitleEditing) CancelTitleEdit();
         }
 
@@ -146,11 +163,11 @@ namespace VisualBuffer.BubbleFX.Controls
 
             var src = e.OriginalSource as DependencyObject;
 
-            // не стартуем drag, если клик по пину / кресту / полю редактирования
+            // исключаем клик по пину/кресту/редактору
             if (IsWithin(src, PinBtn) || IsWithin(src, CloseBtn) || IsWithin(src, TitleEdit))
                 return;
 
-            // не стартуем drag, если это даблклик по заголовку (переключаем в edit)
+            // даблклик по заголовку — редактирование
             if (IsWithin(src, HeaderTitleArea) && e is { ClickCount: 2 })
             {
                 BeginTitleEdit();
@@ -171,6 +188,9 @@ namespace VisualBuffer.BubbleFX.Controls
             _lastScreen = screen;
             _lastMoveAtUtc = DateTime.UtcNow;
             _hoverWatch.Start();
+
+            // старт drag → сразу обновим прозрачность
+            UpdateOpacityState();
         }
 
         private void Root_MouseMove(object? sender, MouseEventArgs e)
@@ -181,8 +201,13 @@ namespace VisualBuffer.BubbleFX.Controls
             var local = e.GetPosition(this);
             var screen = PointToScreen(local);
 
+            var wasDragging = _drag.IsDragging;
+
             _drag.MaybeBeginDrag(screen);
             _drag.OnMove(screen);
+
+            if (_drag.IsDragging && !wasDragging)
+                UpdateOpacityState(); // перешли в drag — обновить прозрачность
 
             if (!_drag.IsDragging) return;
 
@@ -195,7 +220,6 @@ namespace VisualBuffer.BubbleFX.Controls
 
             if (VM.IsFloating)
             {
-                // двигаем окно
                 var w = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
                 if (w is not null)
                 {
@@ -204,7 +228,6 @@ namespace VisualBuffer.BubbleFX.Controls
                     w.Top = screen.Y / sy - _localGrab.Y;
                 }
 
-                // выбираем КАНДИДАТ на док (но не докаем сейчас)
                 _dockCandidate = null;
                 var host = CanvasWindow.Instance?.HostElement;
                 if (host != null && BubbleHostCanvas.IsUsable(host) && host.IsScreenPointOverHost(screen))
@@ -218,14 +241,12 @@ namespace VisualBuffer.BubbleFX.Controls
             {
                 if (_host is not null)
                 {
-                    // двигаем внутри холста
                     var hostLocalAtCursor = _host.ScreenToLocal(screen);
                     var newTopLeft = new Point(hostLocalAtCursor.X - _localGrab.X,
                                                hostLocalAtCursor.Y - _localGrab.Y);
                     Canvas.SetLeft(this, newTopLeft.X);
                     Canvas.SetTop(this, newTopLeft.Y);
 
-                    // немедленный ан-док при выходе за safe-рамку
                     const double marginPx = 20;
                     var hostRect = new Rect(new Point(0, 0), _host.RenderSize);
                     var safe = Rect.Inflate(hostRect, -marginPx, -marginPx);
@@ -251,6 +272,8 @@ namespace VisualBuffer.BubbleFX.Controls
                         VM.IsFloating = true;
 
                         if (!IsMouseCaptured) CaptureMouse();
+
+                        UpdateOpacityState(); // теперь «плавающий» — всё равно в drag
                     }
                 }
             }
@@ -263,7 +286,6 @@ namespace VisualBuffer.BubbleFX.Controls
             var wasTap = _drag.IsTapNow();
             _hoverWatch.Stop();
 
-            // финал дока
             if (VM.IsFloating)
             {
                 if (_dockCandidate != null)
@@ -303,7 +325,6 @@ namespace VisualBuffer.BubbleFX.Controls
 
             _dockCandidate = null;
 
-            // вставка по arm
             if (_hoverArmed)
             {
                 bool ok = TryPasteAtCursorThroughBubble(VM.ContentText ?? string.Empty);
@@ -312,10 +333,14 @@ namespace VisualBuffer.BubbleFX.Controls
 
             ArmReset();
             _drag.Reset();
+
+            // drag завершён — вернём прозрачность согласно наведению/lock
+            UpdateOpacityState();
+
             if (wasTap) e.Handled = true;
         }
 
-        // ======== редактирование заголовка ========
+        // ======== Редактирование заголовка ========
 
         private void TitleText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -323,7 +348,7 @@ namespace VisualBuffer.BubbleFX.Controls
             if (e.ClickCount == 2)
             {
                 BeginTitleEdit();
-                e.Handled = true; // чтобы даблклик не стартовал drag
+                e.Handled = true;
             }
         }
 
@@ -357,16 +382,8 @@ namespace VisualBuffer.BubbleFX.Controls
 
         private void TitleEdit_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Enter)
-            {
-                CommitTitleEdit();
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Escape)
-            {
-                CancelTitleEdit();
-                e.Handled = true;
-            }
+            if (e.Key == Key.Enter) { CommitTitleEdit(); e.Handled = true; }
+            else if (e.Key == Key.Escape) { CancelTitleEdit(); e.Handled = true; }
         }
 
         private void TitleEdit_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -391,7 +408,22 @@ namespace VisualBuffer.BubbleFX.Controls
 
         private void ArmReset() => _hoverArmed = false;
 
-        // ======== Вставка через InsertEngine «сквозь» пузырь ========
+        // ======== Прозрачность: единая точка принятия решения ========
+
+        private void UpdateOpacityState()
+        {
+            double target;
+            if (_drag.IsDragging)
+                target = _isLocked ? OPACITY_PIN_DRAG : OPACITY_DRAG;
+            else if (_isPointerOver)
+                target = _isLocked ? OPACITY_PIN_HOVER : OPACITY_HOVER;
+            else
+                target = _isLocked ? OPACITY_PIN_IDLE : OPACITY_IDLE;
+
+            Root.Opacity = target;
+        }
+
+        // ======== Вставка «сквозь» пузырь ========
 
         private bool TryPasteAtCursorThroughBubble(string text)
         {

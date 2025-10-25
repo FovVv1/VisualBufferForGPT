@@ -5,7 +5,12 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
              MinWidth="220" MinHeight="170">
-    <Border x:Name="Root" CornerRadius="20" Background="Transparent" BorderBrush="Transparent" BorderThickness="2">
+    <!-- Root — тащим за весь пузырь; ещё в коде подписываемся на MouseEnter/Leave -->
+    <Border x:Name="Root"
+            CornerRadius="20"
+            Background="Transparent"
+            BorderBrush="Transparent"
+            BorderThickness="2">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="25"/>
@@ -23,7 +28,7 @@
 
             <!-- PIN (слева) -->
             <Border Grid.Column="0" Grid.Row="0" CornerRadius="15,0,0,0"
-                    Background="#669AA0A6" BorderBrush="#CC9AA0A6" BorderThickness="1,1,0,0">
+                    Background="#4f4f4f" BorderBrush="#9AA0A6" BorderThickness="1,1,0,0">
                 <Button x:Name="PinBtn"
                         Background="Transparent"
                         BorderBrush="Transparent"
@@ -32,18 +37,17 @@
                         Click="PinBtn_Click"
                         ToolTip="Заблокировать/разблокировать пузырь">
                     <Image x:Name="PinIcon"
-                           Width="20" Height="20" Margin="3,1,2,0"
+                           Width="20" Height="20" Margin="3,3,2,3"
                            Source="/Resources/transparentPin.png"
                            RenderTransformOrigin="0.5,0.5"/>
                 </Button>
             </Border>
 
-            <!-- Заголовок (середина шапки). Даблклик -> режим редактирования -->
+            <!-- Заголовок -->
             <Border x:Name="HeaderTitleArea"
                     Grid.Column="1" Grid.Row="0" Grid.ColumnSpan="5"
-                    Background="#CC9AA0A6">
+                    Background="#9AA0A6">
                 <Grid>
-                    <!-- режим просмотра -->
                     <TextBlock x:Name="TitleText"
                                Text="{Binding Title}"
                                TextAlignment="Left"
@@ -53,7 +57,6 @@
                                FontFamily="Cascadia Code"
                                Foreground="Beige"
                                MouseLeftButtonDown="TitleText_MouseLeftButtonDown"/>
-                    <!-- режим редактирования -->
                     <TextBox x:Name="TitleEdit"
                              Visibility="Collapsed"
                              Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -61,23 +64,23 @@
                              FontSize="15"
                              FontFamily="Cascadia Code"
                              Foreground="Beige"
-                             Background="#55333333"
-                             BorderBrush="#99FFFFFF"
+                             Background="#333333"
+                             BorderBrush="#FFFFFF"
                              VerticalContentAlignment="Center"
                              KeyDown="TitleEdit_KeyDown"
                              LostKeyboardFocus="TitleEdit_LostKeyboardFocus"/>
                 </Grid>
             </Border>
 
-            <!-- Кнопка закрыть (справа) -->
+            <!-- Закрыть -->
             <Border x:Name="CloseArea"
                     Grid.Column="6" Grid.Row="0"
                     CornerRadius="0,15,0,0"
-                    Background="#CCC83A3A" BorderBrush="#CC9AA0A6" BorderThickness="0,1,1,0">
+                    Background="#C83A3A" BorderBrush="#9AA0A6" BorderThickness="0,1,1,0">
                 <Button x:Name="CloseBtn"
                         Background="Transparent"
                         Content="✕" Margin="0"
-                        Foreground="#CC9AA0A6"
+                        Foreground="#9AA0A6"
                         VerticalAlignment="Stretch"
                         HorizontalAlignment="Stretch"
                         Click="CloseBtn_Click">
@@ -93,8 +96,8 @@
             <Border x:Name="ContentArea"
                     Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="7"
                     CornerRadius="0,0,15,15"
-                    BorderThickness="1" BorderBrush="#CC9AA0A6"
-                    Background="#999AA0A6" Padding="6">
+                    BorderThickness="1" BorderBrush="#9AA0A6"
+                    Background="#6b6b6b" Padding="6">
                 <ScrollViewer VerticalScrollBarVisibility="Hidden" CanContentScroll="True" IsHitTestVisible="False">
                     <TextBlock Foreground="Beige"
                                TextWrapping="Wrap"
