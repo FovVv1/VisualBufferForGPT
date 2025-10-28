@@ -5,7 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
              MinWidth="220" MinHeight="170">
-    <!-- Root — тащим за весь пузырь; ещё в коде подписываемся на MouseEnter/Leave -->
+    <!-- Тащим за весь пузырь; прозрачность/видимость управляются из кода -->
     <Border x:Name="Root"
             CornerRadius="20"
             Background="Transparent"
@@ -13,8 +13,8 @@
             BorderThickness="2">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="25"/>
-                <RowDefinition Height="*"/>
+                <RowDefinition x:Name="HeaderRow" Height="25"/>
+                <RowDefinition x:Name="ContentRow" Height="*"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="30"/>
@@ -26,9 +26,14 @@
                 <ColumnDefinition Width="30"/>
             </Grid.ColumnDefinitions>
 
-            <!-- PIN (слева) -->
-            <Border Grid.Column="0" Grid.Row="0" CornerRadius="15,0,0,0"
-                    Background="#4f4f4f" BorderBrush="#9AA0A6" BorderThickness="1,1,0,0">
+            <!-- PIN (слева). В режиме PIN плитка становится прозрачной, видна только PNG -->
+            <Border x:Name="PinArea"
+                    Grid.Column="0" Grid.Row="0"
+                    CornerRadius="15,0,0,0"
+                    Background="#4f4f4f"
+                    BorderBrush="#9AA0A6"
+                    BorderThickness="1,1,0,0"
+                    Opacity="1">
                 <Button x:Name="PinBtn"
                         Background="Transparent"
                         BorderBrush="Transparent"
@@ -37,15 +42,38 @@
                         Click="PinBtn_Click"
                         ToolTip="Заблокировать/разблокировать пузырь">
                     <Image x:Name="PinIcon"
-                           Width="20" Height="20" Margin="3,3,2,3"
+                           Width="20" Height="20" Margin="3,1,2, 0"
                            Source="/Resources/transparentPin.png"
                            RenderTransformOrigin="0.5,0.5"/>
                 </Button>
             </Border>
 
+            <Border x:Name="CopyArea"
+                    Grid.Column="1" Grid.Row="0"
+                    CornerRadius="0,0,0,0"
+                    Background="#4f4f4f"
+                    BorderBrush="#9AA0A6"
+                    BorderThickness="1,1,0,0"
+                    Opacity="1">
+                <Button x:Name="CopyBtn"
+                        Background="Transparent"
+                        BorderBrush="Transparent"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Click="CopyBtn_Click"
+                        ToolTip="Заблокировать/разблокировать пузырь">
+                    <Image x:Name="CopyIcon"
+                           Width="13" Height="13"
+                           Source="/Resources/free-icon-copy-3979470.png"
+                           RenderTransformOrigin="0.5,0.5"/>
+                </Button>
+            </Border>
+
+
+
             <!-- Заголовок -->
             <Border x:Name="HeaderTitleArea"
-                    Grid.Column="1" Grid.Row="0" Grid.ColumnSpan="5"
+                    Grid.Column="2" Grid.Row="0" Grid.ColumnSpan="4"
                     Background="#9AA0A6">
                 <Grid>
                     <TextBlock x:Name="TitleText"
@@ -92,15 +120,22 @@
                 </Button>
             </Border>
 
-            <!-- Контент -->
+            <!-- Контент (именно ЭТА зона будет сужаться вдвое при PIN) -->
             <Border x:Name="ContentArea"
                     Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="7"
                     CornerRadius="0,0,15,15"
                     BorderThickness="1" BorderBrush="#9AA0A6"
-                    Background="#6b6b6b" Padding="6">
-                <ScrollViewer VerticalScrollBarVisibility="Hidden" CanContentScroll="True" IsHitTestVisible="False">
-                    <TextBlock Foreground="Beige"
+                    Background="#6b6b6b"
+                    Padding="6"
+                    ClipToBounds="True">
+                <ScrollViewer x:Name="ContentScroll"
+                              VerticalScrollBarVisibility="Hidden"
+                              CanContentScroll="True"
+                              IsHitTestVisible="False">
+                    <TextBlock x:Name="ContentTextBlock"
+                               Foreground="Beige"
                                TextWrapping="Wrap"
+                               TextTrimming="CharacterEllipsis"
                                FontSize="13"
                                FontWeight="Light"
                                FontFamily="Cascadia Code"

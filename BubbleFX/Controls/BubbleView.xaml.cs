@@ -26,35 +26,32 @@ namespace VisualBuffer.BubbleFX.Controls
         private BubbleHostCanvas? _host;
         private Point _localGrab;
 
-        // кандидаты док/андок
         private BubbleHostCanvas? _dockCandidate;
         private Point _dockCandidateLocal;
 
-        // hover-paste
         private readonly DispatcherTimer _hoverWatch;
         private Point _lastScreen;
         private DateTime _lastMoveAtUtc;
         private bool _hoverArmed;
 
-        // lock (pin)
+        // PIN
         private bool _isLocked = false;
 
-        // редактирование заголовка
+        // Title edit
         private bool _isTitleEditing = false;
         private string _titleBeforeEdit = "";
 
-        // прозрачность
+        // Hover opacity (для НЕ pinned)
         private bool _isPointerOver;
-
-        // Базовые уровни прозрачности (чуть-чуть «дымка» в idle)
         private const double OPACITY_IDLE = 0.5;
-        private const double OPACITY_HOVER = 1.00;
+        private const double OPACITY_HOVER = 1.0;
         private const double OPACITY_DRAG = 0.25;
 
-        // При закреплении — ещё прозрачнее во всех состояниях
-        private const double OPACITY_PIN_IDLE = 0.2;
-        private const double OPACITY_PIN_HOVER = 0.2;
-        private const double OPACITY_PIN_DRAG = 0.2;
+        // При PIN остальное почти невидимо, но PinIcon виден на 100%
+        private const double OPACITY_PIN_OTHERS = 0.2;
+
+        // Запомнить «звёздочку» контента, чтобы вернуть при unpin
+        private readonly GridLength _contentStar = new(1, GridUnitType.Star);
 
         private const int HoverMs = 1000;
         private const double MoveSlopPx = 3.0;
@@ -92,17 +89,17 @@ namespace VisualBuffer.BubbleFX.Controls
                 VM.IsFloating = true;
             }
 
-            // drag за весь пузырь
+            // drag за ВСЮ поверхность
             Root.MouseLeftButtonDown += Root_MouseLeftButtonDown;
             PreviewMouseMove += Root_MouseMove;
             PreviewMouseLeftButtonUp += Root_MouseLeftButtonUp;
 
-            // прозрачность по наведению
+            // прозрачность не-PIN (hover)
             Root.MouseEnter += (_, __) => { _isPointerOver = true; UpdateOpacityState(); };
             Root.MouseLeave += (_, __) => { _isPointerOver = false; UpdateOpacityState(); };
 
-            UpdateLockVisual();
-            UpdateOpacityState(); // стартовый вид
+            ApplyPinVisualAndLayout();      // привести всё к текущему состоянию
+            UpdateOpacityState();           // стартовая прозрачность
         }
 
         private void OnUnloaded(object? s, RoutedEventArgs e)
@@ -110,9 +107,6 @@ namespace VisualBuffer.BubbleFX.Controls
             Root.MouseLeftButtonDown -= Root_MouseLeftButtonDown;
             PreviewMouseMove -= Root_MouseMove;
             PreviewMouseLeftButtonUp -= Root_MouseLeftButtonUp;
-
-            Root.MouseEnter -= (_, __) => { };
-            Root.MouseLeave -= (_, __) => { };
 
             _hoverWatch.Stop();
             _floatWindow = null;
@@ -134,25 +128,70 @@ namespace VisualBuffer.BubbleFX.Controls
         private void PinBtn_Click(object sender, RoutedEventArgs e)
         {
             _isLocked = !_isLocked;
-            UpdateLockVisual();
+            ApplyPinVisualAndLayout();
             UpdateOpacityState();
         }
 
-        private void UpdateLockVisual()
+        /// <summary>
+        /// Делает видимой только PNG PIN и сужает ЗОНУ контента вдвое при PIN.
+        /// Возвращает всё обратно при UNPIN.
+        /// </summary>
+        private void ApplyPinVisualAndLayout()
         {
+            // Иконка
             var uri = _isLocked
                 ? new Uri("pack://application:,,,/Resources/redPin3.png")
                 : new Uri("pack://application:,,,/Resources/transparentPin.png");
             PinIcon.Source = new BitmapImage(uri);
 
-            // блокируем хедер/контент/крестик; пин — кликабелен всегда
+            // Кликабельность (при PIN только PIN кликабелен)
             HeaderTitleArea.IsHitTestVisible = !_isLocked;
             CloseArea.IsHitTestVisible = !_isLocked;
             CloseBtn.IsEnabled = !_isLocked;
             ContentArea.IsHitTestVisible = !_isLocked;
 
-            // никаких локальных «димов» — прозрачность управляется едино через Root.Opacity
             if (_isLocked && _isTitleEditing) CancelTitleEdit();
+
+            if (_isLocked)
+            {
+                // показать ТОЛЬКО PNG: фон и границы секции PIN прячем
+                PinArea.Background = Brushes.Transparent;
+                PinArea.BorderBrush = Brushes.Transparent;
+                PinArea.Opacity = 1.0; // сама иконка видна на 100%
+
+                // остальное почти невидимо
+                HeaderTitleArea.Opacity = OPACITY_PIN_OTHERS;
+                CloseArea.Opacity = OPACITY_PIN_OTHERS;
+                ContentArea.Opacity = OPACITY_PIN_OTHERS;
+
+                // сузить ЗОНУ контента вдвое (от фактической высоты сейчас)
+                Dispatcher.BeginInvoke(() =>
+                {
+                    var headerH = HeaderRow.ActualHeight > 0 ? HeaderRow.ActualHeight : 25;
+                    var contentH = ContentRow.ActualHeight > 0 ? ContentRow.ActualHeight : Math.Max(60, ActualHeight - headerH);
+                    var pinnedH = Math.Max(40, contentH / 2.0); // не меньше 40px
+                    ContentRow.Height = new GridLength(pinnedH, GridUnitType.Pixel);
+
+                    // ограничим ScrollViewer, чтобы он не «продавил» высоту
+                    ContentScroll.MaxHeight = pinnedH - ContentArea.Padding.Top - ContentArea.Padding.Bottom;
+                }, DispatcherPriority.Loaded);
+            }
+            else
+            {
+                // вернуть фон/границы PIN
+                PinArea.Background = (Brush)new BrushConverter().ConvertFromString("#4f4f4f")!;
+                PinArea.BorderBrush = (Brush)new BrushConverter().ConvertFromString("#9AA0A6")!;
+                PinArea.Opacity = 1.0;
+
+                // остальное обратно видно
+                HeaderTitleArea.Opacity = 1.0;
+                CloseArea.Opacity = 1.0;
+                ContentArea.Opacity = 1.0;
+
+                // вернуть «звёздочку» строке контента
+                ContentRow.Height = _contentStar;
+                ContentScroll.ClearValue(ScrollViewer.MaxHeightProperty);
+            }
         }
 
         // ======== Drag lifecycle ========
@@ -164,7 +203,7 @@ namespace VisualBuffer.BubbleFX.Controls
             var src = e.OriginalSource as DependencyObject;
 
             // исключаем клик по пину/кресту/редактору
-            if (IsWithin(src, PinBtn) || IsWithin(src, CloseBtn) || IsWithin(src, TitleEdit))
+            if (IsWithin(src, PinBtn) || IsWithin(src, CloseBtn) || IsWithin(src, TitleEdit) || IsWithin(src, CopyBtn))
                 return;
 
             // даблклик по заголовку — редактирование
@@ -189,8 +228,7 @@ namespace VisualBuffer.BubbleFX.Controls
             _lastMoveAtUtc = DateTime.UtcNow;
             _hoverWatch.Start();
 
-            // старт drag → сразу обновим прозрачность
-            UpdateOpacityState();
+            UpdateOpacityState(); // старт drag
         }
 
         private void Root_MouseMove(object? sender, MouseEventArgs e)
@@ -202,12 +240,9 @@ namespace VisualBuffer.BubbleFX.Controls
             var screen = PointToScreen(local);
 
             var wasDragging = _drag.IsDragging;
-
             _drag.MaybeBeginDrag(screen);
             _drag.OnMove(screen);
-
-            if (_drag.IsDragging && !wasDragging)
-                UpdateOpacityState(); // перешли в drag — обновить прозрачность
+            if (_drag.IsDragging && !wasDragging) UpdateOpacityState();
 
             if (!_drag.IsDragging) return;
 
@@ -272,8 +307,7 @@ namespace VisualBuffer.BubbleFX.Controls
                         VM.IsFloating = true;
 
                         if (!IsMouseCaptured) CaptureMouse();
-
-                        UpdateOpacityState(); // теперь «плавающий» — всё равно в drag
+                        UpdateOpacityState();
                     }
                 }
             }
@@ -333,11 +367,68 @@ namespace VisualBuffer.BubbleFX.Controls
 
             ArmReset();
             _drag.Reset();
-
-            // drag завершён — вернём прозрачность согласно наведению/lock
             UpdateOpacityState();
 
             if (wasTap) e.Handled = true;
+        }
+
+        private async void CopyBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var text = VM?.ContentText ?? string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                Logger.Info("Copy: ContentText is empty — nothing to copy.");
+                System.Media.SystemSounds.Beep.Play();
+                return;
+            }
+
+            if (TrySetClipboardText(text, out var err))
+            {
+                Logger.Info($"Copy: copied to clipboard, len={text.Length}.");
+
+                // Небольшой визуальный отклик на кнопке Copy
+                var oldBg = CopyArea.Background;
+                try
+                {
+                    CopyArea.Background = new SolidColorBrush(Color.FromArgb(0x66, 0x2E, 0x7D, 0x32)); // зелёный полупрозрачный
+                    await Task.Delay(150);
+                }
+                finally
+                {
+                    CopyArea.Background = oldBg;
+                }
+            }
+            else
+            {
+                Logger.Error("Copy: clipboard set failed: " + err);
+                System.Media.SystemSounds.Beep.Play();
+            }
+        }
+
+        /// <summary>
+        /// Безопасно положить текст в буфер обмена (повторяем попытки, если занят).
+        /// </summary>
+        private static bool TrySetClipboardText(string text, out string? error)
+        {
+            error = null;
+
+            // 6 попыток с нарастающей задержкой
+            for (int i = 0; i < 6; i++)
+            {
+                try
+                {
+                    // Для надёжности можно так:
+                    // Clipboard.SetDataObject(text, true);
+                    Clipboard.SetText(text);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    Thread.Sleep(50 + i * 50);
+                }
+            }
+            return false;
         }
 
         // ======== Редактирование заголовка ========
@@ -408,19 +499,34 @@ namespace VisualBuffer.BubbleFX.Controls
 
         private void ArmReset() => _hoverArmed = false;
 
-        // ======== Прозрачность: единая точка принятия решения ========
+        // ======== Прозрачность ========
 
         private void UpdateOpacityState()
         {
+            if (_isLocked)
+            {
+                // В режиме PIN не трогаем Root.Opacity (иначе затронем иконку).
+                // Управляем прозрачностью только «остальных» в ApplyPinVisualAndLayout().
+                Root.Opacity = 1.0;
+                return;
+            }
+
             double target;
-            if (_drag.IsDragging)
-                target = _isLocked ? OPACITY_PIN_DRAG : OPACITY_DRAG;
-            else if (_isPointerOver)
-                target = _isLocked ? OPACITY_PIN_HOVER : OPACITY_HOVER;
-            else
-                target = _isLocked ? OPACITY_PIN_IDLE : OPACITY_IDLE;
+            if (_drag.IsDragging) target = OPACITY_DRAG;
+            else if (_isPointerOver) target = OPACITY_HOVER;
+            else target = OPACITY_IDLE;
 
             Root.Opacity = target;
+
+            // на всякий случай вернуть видимость остальным узлам (мог быть PIN ранее)
+            HeaderTitleArea.Opacity = 1.0;
+            CloseArea.Opacity = 1.0;
+            ContentArea.Opacity = 1.0;
+            if (PinArea.Background == Brushes.Transparent)
+            {
+                PinArea.Background = (Brush)new BrushConverter().ConvertFromString("#4f4f4f")!;
+                PinArea.BorderBrush = (Brush)new BrushConverter().ConvertFromString("#9AA0A6")!;
+            }
         }
 
         // ======== Вставка «сквозь» пузырь ========

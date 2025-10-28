@@ -10,6 +10,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 	  <None Remove="Resources\blackPin.png" />
+	  <None Remove="Resources\free-icon-copy-3979470.png" />
 	  <None Remove="Resources\redPin.png" />
 	  <None Remove="Resources\redPin2.png" />
 	  <None Remove="Resources\redPin3.png" />
@@ -18,6 +19,9 @@
 	</ItemGroup>
 	<ItemGroup>
 	  <Resource Include="Resources\blackPin.png">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Resource>
+	  <Resource Include="Resources\free-icon-copy-3979470.png">
 	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
 	  </Resource>
 	  <Resource Include="Resources\redPin.png">
