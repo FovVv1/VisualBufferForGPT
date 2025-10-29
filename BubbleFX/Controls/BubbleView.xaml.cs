@@ -141,7 +141,7 @@ namespace VisualBuffer.BubbleFX.Controls
             // Иконка
             var uri = _isLocked
                 ? new Uri("pack://application:,,,/Resources/redPin3.png")
-                : new Uri("pack://application:,,,/Resources/transparentPin.png");
+                : new Uri("pack://application:,,,/Resources/redPin3.png");
             PinIcon.Source = new BitmapImage(uri);
 
             // Кликабельность (при PIN только PIN кликабелен)
@@ -401,7 +401,7 @@ namespace VisualBuffer.BubbleFX.Controls
             else
             {
                 Logger.Error("Copy: clipboard set failed: " + err);
-                System.Media.SystemSounds.Beep.Play();
+                System.Media.SystemSounds.Beep.Play(); 
             }
         }
 
