@@ -58,48 +58,89 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- PIN (слева). В режиме PIN плитка становится прозрачной, видна только PNG -->
-                <Border x:Name="PinArea"
-                        Grid.Column="0" Grid.Row="0"
-                        CornerRadius="14,0,0,0"
-                        Background="#4f4f4f"
-                        BorderBrush="#9AA0A6"
-                        BorderThickness="2,2,0,0"
-                        Opacity="1">
-                    <Button x:Name="PinBtn"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
-                            HorizontalAlignment="Stretch"
-                            VerticalAlignment="Stretch"
-                            Click="PinBtn_Click"
-                            ToolTip="Заблокировать/разблокировать пузырь"
-                            Style="{StaticResource Button.Ghost}">
+            <Border x:Name="PinArea"
+                    Grid.Column="0" Grid.Row="0"
+                    CornerRadius="14,0,0,0"
+                    BorderThickness="2,2,0,0"
+                    Opacity="1">
+                <Button x:Name="PinBtn"
+                        Background="Transparent"
+                        BorderBrush="Transparent"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Click="PinBtn_Click"
+                        Style="{StaticResource Button.Ghost}">
                     <Image x:Name="PinIcon"
-                               Width="20" Height="20" 
-                               Source="/Resources/redPIN3.png"
-                               RenderTransformOrigin="0.5,0.5"
-                               Stretch="Uniform"
-                               SnapsToDevicePixels="True"
-                               RenderOptions.BitmapScalingMode="HighQuality">
+                           Width="20" Height="20"
+                           Source="/Resources/redPIN3.png"
+                           RenderTransformOrigin="0.5,0.5"
+                           Stretch="Uniform"
+                           SnapsToDevicePixels="True"
+                           RenderOptions.BitmapScalingMode="HighQuality">
                         <Image.Style>
                             <Style TargetType="Image">
-                                <Setter Property="Margin" Value="3,1,2,0" />
+                                <Setter Property="Margin" Value="3,1,2,0"/>
+                                <!-- заменяем привязку на нормальную -->
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding _isLocked}" Value="true"> <!-- -------------------------------------------------------------------------------------------- -------------------------->
-                                        <Setter  Property="Margin"  Value="3,4,2,5"/>
+                                    <DataTrigger Binding="{Binding IsPinned, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                        <Setter Property="Margin" Value="3,4,2,5"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Image.Style>
                     </Image>
-
                 </Button>
-                </Border>
 
-                <Border x:Name="CopyArea"
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="#4f4f4f"/>
+                        <Setter Property="BorderBrush" Value="#9AA0A6"/>
+                        <Setter Property="BorderThickness" Value="0,2,2,0"/>
+                        <Setter Property="Cursor" Value="Hand"/>
+                        <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+                        <Setter Property="RenderTransform">
+                            <Setter.Value>
+                                <ScaleTransform ScaleX="1" ScaleY="1"/>
+                            </Setter.Value>
+                        </Setter>
+
+                        <Style.Triggers>
+                            <!-- hover (когда НЕ pinned) -->
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True"/>
+                                    <Condition Binding="{Binding IsPinned, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Background" Value="#636363"/>
+                            </MultiDataTrigger>
+
+                            <!-- pressed (когда НЕ pinned) -->
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsPressed, ElementName=PinBtn}" Value="True"/>
+                                    <Condition Binding="{Binding IsPinned, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Background" Value="#3b3b3b"/>
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.97" ScaleY="0.97"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </MultiDataTrigger>
+
+                            <!-- PIN: ВСЕГДА последний, чтобы перебить остальные -->
+                            <DataTrigger Binding="{Binding IsPinned, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="BorderBrush" Value="Transparent"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            </Border>
+
+            <Border x:Name="CopyArea"
                         Grid.Column="1" Grid.Row="0"
                         CornerRadius="0,0,0,0"
-                        Background="#4f4f4f"
-                        BorderBrush="#9AA0A6"
                         BorderThickness="0.7,2,0,0"
                         Opacity="1">
                     <Button x:Name="CopyBtn"
@@ -115,7 +156,52 @@
                                Source="/Resources/blueCopy2.png"
                                RenderTransformOrigin="0.5,0.5"/>
                     </Button>
-                </Border>
+
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <!-- базовые значения, меняй под себя -->
+                        <Setter Property="Background" Value="#4f4f4f"/>
+                        <Setter Property="BorderBrush" Value="#9AA0A6"/>
+                        <Setter Property="BorderThickness" Value="0,2,2,0"/>
+                        <Setter Property="Cursor" Value="Hand"/>
+                        <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+                        <Setter Property="RenderTransform">
+                            <Setter.Value>
+                                <ScaleTransform ScaleX="1" ScaleY="1"/>
+                            </Setter.Value>
+                        </Setter>
+
+                        <Style.Triggers>
+                            <!-- Hover по Border (и его детям) -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#636363"/>
+                                <!-- hover фон -->
+                                <!-- <Setter Property="BorderBrush" Value="#B0C7CE"/>
+                hover граница -->
+                            </Trigger>
+
+                            <!-- Pressed: состояние берём с внутренней кнопки по имени -->
+                            <DataTrigger Binding="{Binding IsPressed, ElementName=CopyBtn}" Value="True">
+                                <Setter Property="Background" Value="#3b3b3b"/>
+                                <!-- pressed фон -->
+                                <!--<Setter Property="BorderBrush" Value="#7FAAB2"/>
+                 pressed граница -->
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.97" ScaleY="0.97"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+
+                            <!-- Disabled (если вдруг Border отключишь) -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+            </Border>
 
 
 
@@ -152,7 +238,7 @@
                 <Border x:Name="CloseArea"
                         Grid.Column="6" Grid.Row="0"
                         CornerRadius="0,15,0,0"
-                        Background="#C83A3A" BorderBrush="#9AA0A6" BorderThickness="0,2,2,0">
+                        BorderThickness="0,2,2,0">
                     <Button x:Name="CloseBtn"
                             Background="Transparent"
                             Content="✕" Margin="0"
@@ -166,7 +252,52 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                </Border>
+
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <!-- базовые значения, меняй под себя -->
+                        <Setter Property="Background" Value="#C83A3A"/>
+                        <Setter Property="BorderBrush" Value="#9AA0A6"/>
+                        <Setter Property="BorderThickness" Value="0,2,2,0"/>
+                        <Setter Property="Cursor" Value="Hand"/>
+                        <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+                        <Setter Property="RenderTransform">
+                            <Setter.Value>
+                                <ScaleTransform ScaleX="1" ScaleY="1"/>
+                            </Setter.Value>
+                        </Setter>
+
+                        <Style.Triggers>
+                            <!-- Hover по Border (и его детям) -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#D64B4B"/>
+                                <!-- hover фон -->
+                                <!-- <Setter Property="BorderBrush" Value="#B0C7CE"/>
+                                hover граница -->
+                            </Trigger>
+
+                            <!-- Pressed: состояние берём с внутренней кнопки по имени -->
+                            <DataTrigger Binding="{Binding IsPressed, ElementName=CloseBtn}" Value="True">
+                                <Setter Property="Background" Value="#B73636"/>
+                                <!-- pressed фон -->
+                                <!--<Setter Property="BorderBrush" Value="#7FAAB2"/>
+                                 pressed граница -->
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.97" ScaleY="0.97"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+
+                            <!-- Disabled (если вдруг Border отключишь) -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+            </Border>
 
                 <!-- Контент (именно ЭТА зона будет сужаться вдвое при PIN) -->
                 <Border x:Name="ContentArea"
