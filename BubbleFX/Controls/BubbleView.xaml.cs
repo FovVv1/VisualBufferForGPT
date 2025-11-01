@@ -43,9 +43,6 @@
             private DateTime _lastMoveAtUtc;
             private bool _hoverArmed;
 
-            // PIN
-            private bool _isLocked = false;
-
             // Title edit
             private bool _isTitleEditing = false;
             private string _titleBeforeEdit = "";
@@ -78,16 +75,17 @@
                 _hoverWatch.Tick += HoverWatch_Tick;
             }
 
-                        
-            private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-            {
-                var view = (BubbleView)d;
-                view.ApplyPinVisualAndLayout(); // тут оставляем только логику для Title/Close/Content/высоты
-            }
 
-            
+        private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            var view = (BubbleView)d;
+            view.ApplyPinVisualAndLayout();
+            view.UpdateOpacityState(); // чтобы сразу обновить Root
+        }
 
-            private void OnLoaded(object? s, RoutedEventArgs e)
+
+
+        private void OnLoaded(object? s, RoutedEventArgs e)
             {
                 _host = FindAncestorHost();
 
@@ -147,82 +145,83 @@
                 IsPinned = !IsPinned;
             }
 
-            /// <summary>
-            /// Делает видимой только PNG PIN и сужает ЗОНУ контента вдвое при PIN.
-            /// Возвращает всё обратно при UNPIN.
-            /// </summary>
-            private void ApplyPinVisualAndLayout()
+
+        /// <summary>
+        /// Делает видимой только PNG PIN и сужает ЗОНУ контента вдвое при PIN.
+        /// Возвращает всё обратно при UNPIN.
+        /// </summary>
+        private void ApplyPinVisualAndLayout()
+        {
+            // иконка (если нужно менять на прозрачную/цветную)
+            var uri = IsPinned
+                ? new Uri("pack://application:,,,/Resources/redPin3.png")       // закреплён
+                : new Uri("pack://application:,,,/Resources/redPin3.png"); // обычный
+            PinIcon.Source = new BitmapImage(uri);
+
+            // кликабельность: при PIN только сам PIN доступен
+            HeaderTitleArea.IsHitTestVisible = !IsPinned;
+            CloseArea.IsHitTestVisible = !IsPinned;
+            CopyArea.IsHitTestVisible = !IsPinned;
+            BubbleBackground.IsHitTestVisible = !IsPinned;
+            ResizeArea.IsHitTestVisible = !IsPinned;
+            TopPanelBackground.Opacity = 1.0;
+
+            if (IsPinned && _isTitleEditing) CancelTitleEdit();
+
+            if (IsPinned)
             {
-                // Иконка
-                var uri = _isLocked
-                    ? new Uri("pack://application:,,,/Resources/redPin3.png")
-                    : new Uri("pack://application:,,,/Resources/redPin3.png");
-                PinIcon.Source = new BitmapImage(uri);
+                // затемняем «остальное»; PinArea визуально управляется стилем в XAML
+                HeaderTitleArea.Opacity = OPACITY_PIN_OTHERS;
+                CloseArea.Opacity = OPACITY_PIN_OTHERS;
+                ContentArea.Opacity = OPACITY_PIN_OTHERS;
+                BubbleBackground.Opacity = OPACITY_PIN_OTHERS;
+                CopyArea.Opacity = OPACITY_PIN_OTHERS;
+                TopPanelBackground.Opacity = OPACITY_PIN_OTHERS;
+                ResizeArea.Opacity = OPACITY_PIN_OTHERS;
 
-                // Кликабельность (при PIN только PIN кликабелен)
-                HeaderTitleArea.IsHitTestVisible = !_isLocked;
-                CloseArea.IsHitTestVisible = !_isLocked;
-                CloseBtn.IsEnabled = !_isLocked;
-                ContentArea.IsHitTestVisible = !_isLocked;
-
-                if (_isLocked && _isTitleEditing) CancelTitleEdit();
-
-                if (_isLocked)
+                
+                // сузить ЗОНУ контента вдвое
+                Dispatcher.BeginInvoke(() =>
                 {
-                    // показать ТОЛЬКО PNG: фон и границы секции PIN прячем
-                    PinArea.Background = Brushes.Transparent;
-                    PinArea.BorderBrush = Brushes.Transparent;
-                    PinArea.Opacity = 1.0; // сама иконка видна на 100%
-
-                    // остальное почти невидимо
-                    HeaderTitleArea.Opacity = OPACITY_PIN_OTHERS;
-                    CloseArea.Opacity = OPACITY_PIN_OTHERS;
-                    ContentArea.Opacity = OPACITY_PIN_OTHERS;
-
-                    // сузить ЗОНУ контента вдвое (от фактической высоты сейчас)
-                    Dispatcher.BeginInvoke(() =>
-                    {
-                        var headerH = HeaderRow.ActualHeight > 0 ? HeaderRow.ActualHeight : 25;
-                        var contentH = ContentRow.ActualHeight > 0 ? ContentRow.ActualHeight : Math.Max(60, ActualHeight - headerH);
-                        var pinnedH = Math.Max(40, contentH / 2.0); // не меньше 40px
-                        ContentRow.Height = new GridLength(pinnedH, GridUnitType.Pixel);
-
-                        // ограничим ScrollViewer, чтобы он не «продавил» высоту
-                        ContentScroll.MaxHeight = pinnedH - ContentArea.Padding.Top - ContentArea.Padding.Bottom;
-                    }, DispatcherPriority.Loaded);
-                }
-                else
-                {
-                    // вернуть фон/границы PIN
-                    PinArea.Background = (Brush)new BrushConverter().ConvertFromString("#4f4f4f")!;
-                    PinArea.BorderBrush = (Brush)new BrushConverter().ConvertFromString("#9AA0A6")!;
-                    PinArea.Opacity = 1.0;
-
-                    // остальное обратно видно
-                    HeaderTitleArea.Opacity = 1.0;
-                    CloseArea.Opacity = 1.0;
-                    ContentArea.Opacity = 1.0;
-
-                    // вернуть «звёздочку» строке контента
-                    ContentRow.Height = _contentStar;
-                    ContentScroll.ClearValue(ScrollViewer.MaxHeightProperty);
-                }
+                    var headerH = HeaderRow.ActualHeight > 0 ? HeaderRow.ActualHeight : 25;
+                    var contentH = ContentRow.ActualHeight > 0 ? ContentRow.ActualHeight : Math.Max(60, ActualHeight - headerH);
+                    var pinnedH = Math.Max(40, contentH / 2.0);
+                    ContentRow.Height = new GridLength(pinnedH, GridUnitType.Pixel);
+                    ContentScroll.MaxHeight = pinnedH - ContentArea.Padding.Top - ContentArea.Padding.Bottom;
+                }, DispatcherPriority.Loaded);
             }
-
-            // ======== Drag lifecycle ========
-
-            private void Root_MouseLeftButtonDown(object? sender, MouseButtonEventArgs e)
+            else
             {
-                if (_isLocked) return;
+                // вернуть видимость
+                HeaderTitleArea.Opacity = 1.0;
+                CloseArea.Opacity = 1.0;
+                ContentArea.Opacity = 1.0;
+                CopyArea.Opacity = 1.0;
+                BubbleBackground.Opacity = 1.0;
+                TopPanelBackground.Opacity = 1.0;
+                ResizeArea.Opacity = 1.0;
+                PinArea.Opacity = 1.0;
+
+                // вернуть «звёздочку» строке контента и ограничения скролла
+                ContentRow.Height = _contentStar;
+                ContentScroll.ClearValue(ScrollViewer.MaxHeightProperty);
+            }
+        }
+
+        // ======== Drag lifecycle ========
+
+        private void Root_MouseLeftButtonDown(object? sender, MouseButtonEventArgs e)
+            {
+                if (IsPinned) return;
 
                 var src = e.OriginalSource as DependencyObject;
 
-                // исключаем клик по пину/кресту/редактору
-                if (IsWithin(src, PinBtn) || IsWithin(src, CloseBtn) || IsWithin(src, TitleEdit) || IsWithin(src, CopyBtn))
-                    return;
+            // исключаем клик по пину/кресту/редактору
+            if (IsWithin(src, PinBtn) || IsWithin(src, CloseBtn) || IsWithin(src, TitleEdit) || IsWithin(src, CopyBtn))
+                return;
 
-                // даблклик по заголовку — редактирование
-                if (IsWithin(src, HeaderTitleArea) && e is { ClickCount: 2 })
+            // даблклик по заголовку — редактирование
+            if (IsWithin(src, HeaderTitleArea) && e is { ClickCount: 2 })
                 {
                     BeginTitleEdit();
                     e.Handled = true;
@@ -248,7 +247,7 @@
 
             private void Root_MouseMove(object? sender, MouseEventArgs e)
             {
-                if (_isLocked || _isTitleEditing) return;
+                if (IsPinned || _isTitleEditing) return;
                 if (!_drag.IsDown) return;
 
                 var local = e.GetPosition(this);
@@ -402,16 +401,16 @@
                     Logger.Info($"Copy: copied to clipboard, len={text.Length}.");
 
                     // Небольшой визуальный отклик на кнопке Copy
-                    var oldBg = CopyArea.Background;
-                    try
-                    {
-                        CopyArea.Background = new SolidColorBrush(Color.FromArgb(0x66, 0x2E, 0x7D, 0x32)); // зелёный полупрозрачный
-                        await Task.Delay(150);
-                    }
-                    finally
-                    {
-                        CopyArea.Background = oldBg;
-                    }
+                    //var oldBg = CopyArea.Background;
+                    //try
+                    //{
+                    //    CopyArea.Background = new SolidColorBrush(Color.FromArgb(0x66, 0x2E, 0x7D, 0x32)); // зелёный полупрозрачный
+                    //    await Task.Delay(150);
+                    //}
+                    //finally
+                    //{
+                    //    CopyArea.Background = oldBg;
+                    //}
                 }
                 else
                 {
@@ -450,12 +449,8 @@
 
             private void TitleText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
             {
-                if (_isLocked) return;
-                if (e.ClickCount == 2)
-                {
-                    BeginTitleEdit();
-                    e.Handled = true;
-                }
+                if (IsPinned) return; // было: _isLocked
+                if (e.ClickCount == 2) { BeginTitleEdit(); e.Handled = true; }
             }
 
             private void BeginTitleEdit()
@@ -518,10 +513,9 @@
 
             private void UpdateOpacityState()
             {
-                if (_isLocked)
+                if (IsPinned)
                 {
-                    // В режиме PIN не трогаем Root.Opacity (иначе затронем иконку).
-                    // Управляем прозрачностью только «остальных» в ApplyPinVisualAndLayout().
+                    // В PIN Root делаем 1.0 (иначе потушим саму PNG), «дымка» уже расставлена выше
                     Root.Opacity = 1.0;
                     return;
                 }
@@ -533,20 +527,15 @@
 
                 Root.Opacity = target;
 
-                // на всякий случай вернуть видимость остальным узлам (мог быть PIN ранее)
+                // на случай возврата из PIN — вернуть нормальную видимость
                 HeaderTitleArea.Opacity = 1.0;
                 CloseArea.Opacity = 1.0;
                 ContentArea.Opacity = 1.0;
-                if (PinArea.Background == Brushes.Transparent)
-                {
-                    PinArea.Background = (Brush)new BrushConverter().ConvertFromString("#4f4f4f")!;
-                    PinArea.BorderBrush = (Brush)new BrushConverter().ConvertFromString("#9AA0A6")!;
-                }
             }
 
-            // ======== Вставка «сквозь» пузырь ========
+        // ======== Вставка «сквозь» пузырь ========
 
-            private bool TryPasteAtCursorThroughBubble(string text)
+        private bool TryPasteAtCursorThroughBubble(string text)
             {
                 try
                 {

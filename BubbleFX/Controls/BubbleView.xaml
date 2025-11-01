@@ -34,8 +34,9 @@
                     </Setter.Value>
                 </Setter>
             </Style>
-
-        </UserControl.Resources>
+        <Brush x:Key="OutlineClr">#3d3d3d</Brush>
+        <Brush x:Key="InsideClr">#1e1e1e</Brush>
+    </UserControl.Resources>
         <!-- Тащим за весь пузырь; прозрачность/видимость управляются из кода -->
         <Border x:Name="Root"
                 CornerRadius="20"
@@ -57,15 +58,31 @@
                     <ColumnDefinition Width="30"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- PIN (слева). В режиме PIN плитка становится прозрачной, видна только PNG -->
+            <Border x:Name="BubbleBackground"
+                Grid.Column="0" 
+                Grid.Row="0" 
+                Grid.RowSpan="2"
+                Grid.ColumnSpan="7"
+                CornerRadius="10 10 10 10"
+                Background="{StaticResource OutlineClr}"/>
+
+            <Border x:Name="TopPanelBackground"
+                    Grid.Column="0" 
+                    Grid.Row="0" 
+                    Grid.RowSpan="1"
+                    Grid.ColumnSpan="7"
+                    CornerRadius="10 10 5 5"
+                    BorderThickness="2 2 2 0"
+                    BorderBrush="Transparent"
+                    Background="{StaticResource InsideClr}"/>
+
+            <!-- PIN (слева). В режиме PIN плитка становится прозрачной, видна только PNG -->
             <Border x:Name="PinArea"
                     Grid.Column="0" Grid.Row="0"
-                    CornerRadius="14,0,0,0"
+                    CornerRadius="10,2,2,5"
                     BorderThickness="2,2,0,0"
                     Opacity="1">
                 <Button x:Name="PinBtn"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Stretch"
                         Click="PinBtn_Click"
@@ -86,15 +103,18 @@
                                         <Setter Property="Margin" Value="3,4,2,5"/>
                                     </DataTrigger>
                                 </Style.Triggers>
+                                
+                                
                             </Style>
                         </Image.Style>
+                        
                     </Image>
                 </Button>
 
                 <Border.Style>
                     <Style TargetType="Border">
-                        <Setter Property="Background" Value="#4f4f4f"/>
-                        <Setter Property="BorderBrush" Value="#9AA0A6"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderBrush" Value="Transparent"/>
                         <Setter Property="BorderThickness" Value="0,2,2,0"/>
                         <Setter Property="Cursor" Value="Hand"/>
                         <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
@@ -128,24 +148,25 @@
                                 </Setter>
                             </MultiDataTrigger>
 
-                            <!-- PIN: ВСЕГДА последний, чтобы перебить остальные -->
+                            <!-- PIN: ВСЕГДА последний, чтобы перебить остальные 
                             <DataTrigger Binding="{Binding IsPinned, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
-                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="Background" Value="{StaticResource InsideClr}"/>
                                 <Setter Property="BorderBrush" Value="Transparent"/>
-                            </DataTrigger>
+                            </DataTrigger>-->
+
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
             </Border>
 
+            <!-- Копирование содержимого -->
             <Border x:Name="CopyArea"
                         Grid.Column="1" Grid.Row="0"
                         CornerRadius="0,0,0,0"
-                        BorderThickness="0.7,2,0,0"
+                        BorderThickness="0,2,0,0"
                         Opacity="1">
+                
                     <Button x:Name="CopyBtn"
-                            Background="Transparent"
-                            BorderBrush="Transparent"
                             HorizontalAlignment="Stretch"
                             VerticalAlignment="Stretch"
                             Click="CopyBtn_Click"
@@ -160,8 +181,8 @@
                 <Border.Style>
                     <Style TargetType="Border">
                         <!-- базовые значения, меняй под себя -->
-                        <Setter Property="Background" Value="#4f4f4f"/>
-                        <Setter Property="BorderBrush" Value="#9AA0A6"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderBrush" Value="Transparent"/>
                         <Setter Property="BorderThickness" Value="0,2,2,0"/>
                         <Setter Property="Cursor" Value="Hand"/>
                         <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
@@ -203,61 +224,64 @@
 
             </Border>
 
+            <!-- Заголовок -->
+            <Border x:Name="HeaderTitleArea"
+                    Grid.Column="2" 
+                    Grid.Row="0" 
+                    Grid.ColumnSpan="3"
+                    Background="Transparent"
+                    BorderThickness="0 2 0 0">
+                <Grid>
+                    <TextBlock x:Name="TitleText"
+                               Text="{Binding Title}"
+                               TextAlignment="Center"
+                               Margin="2,4,2,2"
+                               VerticalAlignment="Center"
+                               FontSize="17"
+                               FontFamily="Cascadia Code"
+                               Foreground="White"
+                               MouseLeftButtonDown="TitleText_MouseLeftButtonDown"/>
+                    <TextBox x:Name="TitleEdit"
+                             Visibility="Collapsed"
+                             Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Margin="2,2,2,2"
+                             FontSize="15"
+                             FontFamily="Cascadia Code"
+                             Foreground="Beige"
+                             Background="#333333"
+                             BorderBrush="#FFFFFF"
+                             TextAlignment="Center"
+                             VerticalContentAlignment="Center"
+                             KeyDown="TitleEdit_KeyDown"
+                             LostKeyboardFocus="TitleEdit_LostKeyboardFocus"/>
+                </Grid>
+            </Border>
 
-
-                <!-- Заголовок -->
-                <Border x:Name="HeaderTitleArea"
-                        Grid.Column="2" Grid.Row="0" Grid.ColumnSpan="4"
-                        Background="#9AA0A6">
-                    <Grid>
-                        <TextBlock x:Name="TitleText"
-                                   Text="{Binding Title}"
-                                   TextAlignment="Left"
-                                   Margin="30,0,8,0"
-                                   VerticalAlignment="Center"
-                                   FontSize="15"
-                                   FontFamily="Cascadia Code"
-                                   Foreground="Beige"
-                                   MouseLeftButtonDown="TitleText_MouseLeftButtonDown"/>
-                        <TextBox x:Name="TitleEdit"
-                                 Visibility="Collapsed"
-                                 Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 Margin="28,2,6,2"
-                                 FontSize="15"
-                                 FontFamily="Cascadia Code"
-                                 Foreground="Beige"
-                                 Background="#333333"
-                                 BorderBrush="#FFFFFF"
-                                 VerticalContentAlignment="Center"
-                                 KeyDown="TitleEdit_KeyDown"
-                                 LostKeyboardFocus="TitleEdit_LostKeyboardFocus"/>
-                    </Grid>
-                </Border>
-
-                <!-- Закрыть -->
-                <Border x:Name="CloseArea"
-                        Grid.Column="6" Grid.Row="0"
-                        CornerRadius="0,15,0,0"
-                        BorderThickness="0,2,2,0">
-                    <Button x:Name="CloseBtn"
-                            Background="Transparent"
-                            Content="✕" Margin="0"
-                            Foreground="#9AA0A6"
-                            VerticalAlignment="Stretch"
-                            HorizontalAlignment="Stretch"
-                            Click="CloseBtn_Click">
-                        <Button.Style>
-                        <Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}">
-                                <Setter Property="BorderBrush" Value="Transparent"/>
-                            </Style>
-                        </Button.Style>
-                    </Button>
+            <!-- Возврат к исходному раземру окна, копактному -->
+            <Border x:Name="ResizeArea"
+            Grid.Column="5" Grid.Row="0"
+            CornerRadius="0,0,0,0"
+            BorderThickness="0,2,0,0"
+            Opacity="1">
+                <Button x:Name="ResizeBtn"
+                Background="Transparent"
+                BorderBrush="Transparent"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                Click="CopyBtn_Click"
+                ToolTip="Заблокировать/разблокировать пузырь"
+                Style="{StaticResource Button.Ghost}">
+                    <Image x:Name="ResizeIcon"
+                   Width="13" Height="13"
+                   Source="/Resources/blueCopy2.png"
+                   RenderTransformOrigin="0.5,0.5"/>
+                </Button>
 
                 <Border.Style>
                     <Style TargetType="Border">
                         <!-- базовые значения, меняй под себя -->
-                        <Setter Property="Background" Value="#C83A3A"/>
-                        <Setter Property="BorderBrush" Value="#9AA0A6"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderBrush" Value="Transparent"/>
                         <Setter Property="BorderThickness" Value="0,2,2,0"/>
                         <Setter Property="Cursor" Value="Hand"/>
                         <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
@@ -270,18 +294,18 @@
                         <Style.Triggers>
                             <!-- Hover по Border (и его детям) -->
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#D64B4B"/>
+                                <Setter Property="Background" Value="#636363"/>
                                 <!-- hover фон -->
                                 <!-- <Setter Property="BorderBrush" Value="#B0C7CE"/>
-                                hover граница -->
+    hover граница -->
                             </Trigger>
 
                             <!-- Pressed: состояние берём с внутренней кнопки по имени -->
-                            <DataTrigger Binding="{Binding IsPressed, ElementName=CloseBtn}" Value="True">
-                                <Setter Property="Background" Value="#B73636"/>
+                            <DataTrigger Binding="{Binding IsPressed, ElementName=ResizeBtn}" Value="True">
+                                <Setter Property="Background" Value="#3b3b3b"/>
                                 <!-- pressed фон -->
                                 <!--<Setter Property="BorderBrush" Value="#7FAAB2"/>
-                                 pressed граница -->
+     pressed граница -->
                                 <Setter Property="RenderTransform">
                                     <Setter.Value>
                                         <ScaleTransform ScaleX="0.97" ScaleY="0.97"/>
@@ -299,29 +323,97 @@
 
             </Border>
 
-                <!-- Контент (именно ЭТА зона будет сужаться вдвое при PIN) -->
-                <Border x:Name="ContentArea"
-                        Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="7"
-                        CornerRadius="0,0,10,10"
-                        BorderThickness="2,1,2,2" BorderBrush="#9AA0A6"
-                        Background="#6b6b6b"
-                        Padding="6"
-                        ClipToBounds="True">
-                    <ScrollViewer x:Name="ContentScroll"
-                                  VerticalScrollBarVisibility="Hidden"
-                                  CanContentScroll="True"
-                                  IsHitTestVisible="False">
-                        <TextBlock x:Name="ContentTextBlock"
-                                   Foreground="Beige"
-                                   TextWrapping="Wrap"
-                                   TextTrimming="CharacterEllipsis"
-                                   FontSize="13"
-                                   FontWeight="Light"
-                                   FontFamily="Cascadia Code"
-                                   Text="{Binding ContentText}"
-                                   Margin="5"/>
-                    </ScrollViewer>
-                </Border>
-            </Grid>
+            <!-- Закрыть -->
+            <Border x:Name="CloseArea"
+                    Grid.Column="6" Grid.Row="0"
+                    CornerRadius="0,10,5,0"
+                    BorderThickness="0,2,2,0">
+                <Button x:Name="CloseBtn"
+                        Background="Transparent"
+                        Content="✕" Margin="0"
+                        Foreground="Red"
+                        FontWeight="ExtraBold"
+                        VerticalAlignment="Stretch"
+                        HorizontalAlignment="Stretch"
+                        Click="CloseBtn_Click"
+                        >
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}">
+                            <Setter Property="BorderBrush" Value="Transparent"/>
+                        </Style>
+                    </Button.Style>
+                </Button>
+
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <!-- базовые значения, меняй под себя -->
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderBrush" Value="Transparent"/>
+                        <Setter Property="BorderThickness" Value="0,2,2,0"/>
+                        <Setter Property="Cursor" Value="Hand"/>
+                        <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+                        <Setter Property="RenderTransform">
+                            <Setter.Value>
+                                <ScaleTransform ScaleX="1" ScaleY="1"/>
+                            </Setter.Value>
+                        </Setter>
+
+                        <Style.Triggers>
+                            <!-- Hover по Border (и его детям) -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#D64B4B"/>
+                                <!-- hover фон -->
+                                <!-- <Setter Property="BorderBrush" Value="#B0C7CE"/>
+                    hover граница -->
+                            </Trigger>
+
+                            <!-- Pressed: состояние берём с внутренней кнопки по имени -->
+                            <DataTrigger Binding="{Binding IsPressed, ElementName=CloseBtn}" Value="True">
+                                <Setter Property="Background" Value="#B73636"/>
+                                <!-- pressed фон -->
+                                <Setter Property="BorderBrush" Value="#9AA0A6"/>
+
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.96" ScaleY="0.96"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+
+                            <!-- Disabled (если вдруг Border отключишь) -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+            </Border>
+
+            <!-- Контент (именно ЭТА зона будет сужаться вдвое при PIN) -->
+            <Border x:Name="ContentArea"
+                    Grid.Row="1" Grid.Column="0" 
+                    Grid.ColumnSpan="7"
+                    CornerRadius="5,5,10,10"
+                    BorderThickness="2,1,2,2" BorderBrush="Transparent"
+                    Background="{StaticResource InsideClr}"
+                    Padding="6"
+                    ClipToBounds="True">
+                <ScrollViewer x:Name="ContentScroll"
+                              VerticalScrollBarVisibility="Hidden"
+                              CanContentScroll="True"
+                              IsHitTestVisible="False">
+                    <TextBlock x:Name="ContentTextBlock"
+                               Foreground="Beige"
+                               TextWrapping="Wrap"
+                               TextTrimming="CharacterEllipsis"
+                               FontSize="13"
+                               FontWeight="Light"
+                               FontFamily="Cascadia Code"
+                               Text="{Binding ContentText}"
+                               Margin="5"/>
+                </ScrollViewer>
+            </Border>
+        </Grid>
         </Border>
     </UserControl>
