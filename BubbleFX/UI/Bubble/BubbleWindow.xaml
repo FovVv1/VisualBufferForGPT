@@ -7,9 +7,13 @@
         ShowInTaskbar="False"
         Topmost="True"
         ResizeMode="NoResize"
-        Width="300" Height="180">
-    <Border CornerRadius="12" Background="Transparent">
+        Width="300" Height="180"
+        SizeToContent="Manual" 
+        UseLayoutRounding="True">
+    <Border CornerRadius="12" Background="Transparent" SnapsToDevicePixels="True">
         <!-- Содержимое подставляется из BubbleView -->
-        <ContentPresenter/>
+        <ContentPresenter HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
+            SnapsToDevicePixels="True"/>
     </Border>
 </Window>

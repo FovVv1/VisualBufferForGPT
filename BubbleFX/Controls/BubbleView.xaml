@@ -4,7 +4,8 @@
                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                  mc:Ignorable="d"
-                 MinWidth="220" MinHeight="170">
+                 MinWidth="220" MinHeight="170"
+                 >
         <UserControl.Resources>
             <!-- Абсолютно голая кнопка -->
             <Style x:Key="Button.Ghost" TargetType="Button">
@@ -259,22 +260,22 @@
 
             <!-- Возврат к исходному раземру окна, копактному -->
             <Border x:Name="ResizeArea"
-            Grid.Column="5" Grid.Row="0"
-            CornerRadius="0,0,0,0"
-            BorderThickness="0,2,0,0"
-            Opacity="1">
+                    Grid.Column="5" Grid.Row="0"
+                    CornerRadius="0,0,0,0"
+                    BorderThickness="0,2,0,0"
+                    Opacity="1">
                 <Button x:Name="ResizeBtn"
-                Background="Transparent"
-                BorderBrush="Transparent"
-                HorizontalAlignment="Stretch"
-                VerticalAlignment="Stretch"
-                Click="CopyBtn_Click"
-                ToolTip="Заблокировать/разблокировать пузырь"
-                Style="{StaticResource Button.Ghost}">
+                        Background="Transparent"
+                        BorderBrush="Transparent"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Click="ResizeBtn_Click"
+                        ToolTip="Заблокировать/разблокировать пузырь"
+                        Style="{StaticResource Button.Ghost}">
                     <Image x:Name="ResizeIcon"
-                   Width="13" Height="13"
-                   Source="/Resources/blueCopy2.png"
-                   RenderTransformOrigin="0.5,0.5"/>
+                           Width="13" Height="13"
+                           Source="/Resources/blueCopy2.png"
+                           RenderTransformOrigin="0.5,0.5"/>
                 </Button>
 
                 <Border.Style>
@@ -402,16 +403,17 @@
                 <ScrollViewer x:Name="ContentScroll"
                               VerticalScrollBarVisibility="Hidden"
                               CanContentScroll="True"
-                              IsHitTestVisible="False">
+                              PanningMode="None" >
                     <TextBlock x:Name="ContentTextBlock"
-                               Foreground="Beige"
-                               TextWrapping="Wrap"
-                               TextTrimming="CharacterEllipsis"
-                               FontSize="13"
-                               FontWeight="Light"
-                               FontFamily="Cascadia Code"
+                                           Foreground="Beige"
+                                           TextWrapping="Wrap"
+                                           TextTrimming="CharacterEllipsis"
+                                           FontSize="13"
+                                           FontWeight="Light"
+                                           FontFamily="Cascadia Code"
+                                           Margin="5"
                                Text="{Binding ContentText}"
-                               Margin="5"/>
+                               />
                 </ScrollViewer>
             </Border>
         </Grid>

@@ -1,25 +1,91 @@
-﻿    using System;
-    using System.Runtime.InteropServices;
-    using System.Text;
-    using System.Windows;
-    using System.Windows.Controls;
-    using System.Windows.Input;
-    using System.Windows.Interop;
-    using System.Windows.Media;
-    using System.Windows.Media.Imaging;
-    using System.Windows.Threading;
-    using VisualBuffer.BubbleFX.Models;
-    using VisualBuffer.BubbleFX.UI.Bubble;
-    using VisualBuffer.BubbleFX.UI.Canvas;
-    using VisualBuffer.BubbleFX.UI.Insert;
-    using VisualBuffer.BubbleFX.Utils;
-    using VisualBuffer.Diagnostics;
+﻿using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using VisualBuffer.BubbleFX.Models;
+using VisualBuffer.BubbleFX.UI.Bubble;
+using VisualBuffer.BubbleFX.UI.Canvas;
+using VisualBuffer.BubbleFX.UI.Insert;
+using VisualBuffer.BubbleFX.Utils;
+using VisualBuffer.Diagnostics;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
+using System.Windows.Documents;
 
-    namespace VisualBuffer.BubbleFX.Controls
+namespace VisualBuffer.BubbleFX.Controls
     {
         public partial class BubbleView : UserControl
         {
-            public BubbleViewModel VM => (BubbleViewModel)DataContext;
+        private static readonly Regex Rx = new(
+                @"(?<url>https?://\S+)" +
+                @"|(?<comment>//.*?$)" +
+                @"|(?<str>""(?:\\.|[^""])*"")" +
+                @"|(?<num>\b\d+(\.\d+)?\b)" +
+                @"|(?<kw>\b(class|public|private|protected|internal|static|void|int|string|var|new|return|if|else|for|foreach|while|switch|case|true|false|null)\b)" +
+                @"|(?<at>@\w+)" +
+                @"|(?<hash>#\w+)",
+                RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+        private void RenderColored(string text)
+        {
+            ContentTextBlock.Inlines.Clear();
+            int i = 0;
+
+            foreach (Match m in Rx.Matches(text))
+            {
+                if (m.Index > i) AddPlain(text.Substring(i, m.Index - i));
+
+                Inline colored = m.Groups["url"].Success ? MakeLink(m.Value) :
+                                 m.Groups["comment"].Success ? MakeRun(m.Value, "#6A9955") :
+                                 m.Groups["str"].Success ? MakeRun(m.Value, "#CE9178") :
+                                 m.Groups["kw"].Success ? MakeRun(m.Value, "#569CD6", FontWeights.SemiBold) :
+                                 m.Groups["num"].Success ? MakeRun(m.Value, "#B5CEA8") :
+                                 m.Groups["at"].Success ? MakeRun(m.Value, "#D7BA7D") :
+                                 m.Groups["hash"].Success ? MakeRun(m.Value, "#4EC9B0") :
+                                 new Run(m.Value);
+
+                ContentTextBlock.Inlines.Add(colored);
+                i = m.Index + m.Length;
+            }
+            if (i < text.Length) AddPlain(text.Substring(i));
+        }
+
+        private Inline MakeRun(string s, string hex, FontWeight? weight = null)
+        {
+            return new Run(s)
+            {
+                Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!,
+                FontWeight = weight ?? FontWeights.Normal
+            };
+        }
+
+        private Inline MakeLink(string url)
+        {
+            var link = new Hyperlink(new Run(url)) { NavigateUri = new Uri(url) };
+            link.RequestNavigate += (_, __) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            link.Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString("#4FC1FF")!;
+            link.TextDecorations = null;
+            return link;
+        }
+
+        // добавляет обычный текст с переносами строк
+        private void AddPlain(string s)
+        {
+            var parts = s.Split('\n');
+            for (int n = 0; n < parts.Length; n++)
+            {
+                ContentTextBlock.Inlines.Add(new Run(parts[n]));
+                if (n < parts.Length - 1) ContentTextBlock.Inlines.Add(new LineBreak());
+            }
+        }
+        public BubbleViewModel VM => (BubbleViewModel)DataContext;
 
             public bool IsPinned
             {
@@ -53,6 +119,10 @@
             private const double OPACITY_HOVER = 1.0;
             private const double OPACITY_DRAG = 0.25;
 
+            // ====== Auto-resize toggle ======
+            private bool _isAutoSized;
+            private double _savedMiniW, _savedMiniH;
+
             // При PIN остальное почти невидимо, но PinIcon виден на 100%
             private const double OPACITY_PIN_OTHERS = 0.2;
 
@@ -69,25 +139,186 @@
                 Unloaded += OnUnloaded;
 
                 _hoverWatch = new DispatcherTimer(DispatcherPriority.Background)
-                {
-                    Interval = TimeSpan.FromMilliseconds(120)
-                };
+                { Interval = TimeSpan.FromMilliseconds(120) };
                 _hoverWatch.Tick += HoverWatch_Tick;
             }
 
 
-        private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        {
-            var view = (BubbleView)d;
-            view.ApplyPinVisualAndLayout();
-            view.UpdateOpacityState(); // чтобы сразу обновить Root
-        }
+            private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+            {
+                var view = (BubbleView)d;
+                view.ApplyPinVisualAndLayout();
+                view.UpdateOpacityState(); // чтобы сразу обновить Root
+            }
+
+            private void ResizeBtn_Click(object sender, RoutedEventArgs e)
+            {
+                if (_isAutoSized) RestoreMiniSize();
+                else AutoResizeToContent();
+            }
+            
+            private void RestoreMiniSize()
+            {
+                double w = Math.Max(MinWidth, _savedMiniW > 0 ? _savedMiniW : 300);
+                double h = Math.Max(MinHeight, _savedMiniH > 0 ? _savedMiniH : 180);
+
+                if (VM.IsFloating)
+                {
+                    _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
+                    if (_floatWindow != null)
+                    {
+                        _floatWindow.Width = w;
+                        _floatWindow.Height = h;
+                    }
+                }
+                else
+                {
+                    Width = w;
+                    Height = h;
+                }
+
+                VM.Width = w;
+                VM.Height = h;
+
+                _isAutoSized = false;
+                UpdateLayout();
+            }
 
 
+            private void AutoResizeToContent()
+            {
+                // Пусто? – просто чутка увеличим, но не ломаемся
+                var text = VM?.ContentText ?? string.Empty;
 
-        private void OnLoaded(object? s, RoutedEventArgs e)
+                // 1) Сохраним текущий компактный размер (чтобы было куда вернуться)
+                if (!_isAutoSized)
+                {
+                    _savedMiniW = VM.Width > 0 ? VM.Width : (Width > 0 ? Width : 300);
+                    _savedMiniH = VM.Height > 0 ? VM.Height : (Height > 0 ? Height : 180);
+                }
+
+                // 2) Ограничения по "коробке", где живёт пузырь
+                const double marginPx = 24; // безопасный отступ от краёв
+                double maxBoxW, maxBoxH;
+
+                if (VM.IsFloating)
+                {
+                    var wa = SystemParameters.WorkArea; // рабочая область монитора
+                    maxBoxW = Math.Max(200, wa.Width * 0.6);   // не шире 60% экрана
+                    maxBoxH = Math.Max(160, wa.Height * 0.75); // не выше 75% экрана
+                }
+                else
+                {
+                    // Докнут на холст
+                    var hostSize = _host?.RenderSize ?? new Size(1200, 800);
+                    maxBoxW = Math.Max(200, hostSize.Width - marginPx * 2);
+                    maxBoxH = Math.Max(160, hostSize.Height - marginPx * 2);
+                }
+
+                // 3) Посчитаем "хром" (рамки/отступы/хедер), который не относится к чистому тексту
+                //    Всё это уже есть в визуальном дереве — берём актуальные значения.
+                double headerH = HeaderRow.ActualHeight > 0 ? HeaderRow.ActualHeight : 25;
+
+                var rootBT = Root.BorderThickness;
+                var caPad = ContentArea.Padding;
+                var caBT = ContentArea.BorderThickness;
+                var tbMar = ContentTextBlock.Margin;
+
+                double chromeX = rootBT.Left + rootBT.Right +
+                                 caBT.Left + caBT.Right +
+                                 caPad.Left + caPad.Right +
+                                 tbMar.Left + tbMar.Right;
+
+                double chromeY = rootBT.Top + rootBT.Bottom +
+                                 caBT.Top + caBT.Bottom +
+                                 caPad.Top + caPad.Bottom +
+                                 tbMar.Top + tbMar.Bottom +
+                                 headerH;
+
+                // 4) Сначала оценим "естественную" ширину самой длинной строки (без переноса),
+                //    потом ограничим её максимумом коробки.
+                var probe = new TextBlock
+                {
+                    Text = text,
+                    TextWrapping = TextWrapping.Wrap, // при бесконечной ширине переносов не будет
+                    FontFamily = ContentTextBlock.FontFamily,
+                    FontSize = ContentTextBlock.FontSize,
+                    FontWeight = ContentTextBlock.FontWeight,
+                    FontStyle = ContentTextBlock.FontStyle,
+                    FontStretch = ContentTextBlock.FontStretch
+                };
+
+                // «непереносная» ширина строки
+                probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                double naturalContentW = probe.DesiredSize.Width; // ширина самой длинной строки
+
+                // максимально допустимая ширина области для текста (без хрома)
+                double maxContentW = Math.Max(120, maxBoxW - chromeX);
+
+                // целевая ширина текста — не шире длинной строки и не шире лимита:
+                double targetContentW = Math.Min(naturalContentW, maxContentW);
+
+                // 5) Посчитаем высоту при этой ширине (тут уже перенос строк работает)
+                probe.Width = targetContentW;
+                probe.TextWrapping = TextWrapping.Wrap;
+                probe.Measure(new Size(targetContentW, double.PositiveInfinity));
+                double contentH = probe.DesiredSize.Height;
+
+                // 6) Складываем с «хромом», учитываем лимит по высоте коробки
+                double targetW = Math.Max(MinWidth, targetContentW + chromeX);
+                double targetH = Math.Max(MinHeight, Math.Min(maxBoxH, contentH + chromeY));
+
+                // 7) Применяем (в окно или сам контрол), синхронизируем VM
+                if (VM.IsFloating)
+                {
+                    _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
+                    if (_floatWindow != null)
+                    {
+                        _floatWindow.Width = targetW;
+                        _floatWindow.Height = targetH;
+                    }
+                }
+                else
+                {
+                    Width = targetW;
+                    Height = targetH;
+
+                    // Если уехали за край холста — подвинем внутрь безопасной зоны
+                    if (_host != null)
+                    {
+                        var hostSize = _host.RenderSize;
+                        double x = Canvas.GetLeft(this);
+                        double y = Canvas.GetTop(this);
+                        x = Math.Min(Math.Max(marginPx, x), Math.Max(marginPx, hostSize.Width - targetW - marginPx));
+                        y = Math.Min(Math.Max(marginPx, y), Math.Max(marginPx, hostSize.Height - targetH - marginPx));
+                        Canvas.SetLeft(this, x);
+                        Canvas.SetTop(this, y);
+                        VM.X = x; VM.Y = y;
+                    }
+                }
+
+                VM.Width = targetW;
+                VM.Height = targetH;
+
+                _isAutoSized = true;
+                UpdateLayout();
+            }
+
+            private void OnLoaded(object? s, RoutedEventArgs e)
             {
                 _host = FindAncestorHost();
+
+                ApplyPinVisualAndLayout();
+                UpdateOpacityState();
+
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_isAutoSized)             // только при первом появлении
+                    {
+                        AutoResizeToContent();     // сохранит _savedMiniW/H как текущий мини-размер
+                        _isAutoSized = true;       // чтобы первая кнопка "Resize" свернула назад
+                    }
+                }, DispatcherPriority.Loaded);
 
                 if (_host is not null)
                 {
@@ -100,19 +331,42 @@
                 else
                 {
                     _floatWindow = Window.GetWindow(this) as BubbleWindow;
-                    Width = VM.Width;
-                    Height = VM.Height;
+
+                    // Контент должен ЗАПОЛНЯТЬ окно:
+                    ClearValue(WidthProperty);
+                    ClearValue(HeightProperty);
+                    HorizontalAlignment = HorizontalAlignment.Stretch;
+                    VerticalAlignment = VerticalAlignment.Stretch;
+
+                    // Начальный размер задаём ОКНУ, а не контролу
+                    if (_floatWindow != null)
+                    {
+                        _floatWindow.Width = VM.Width;
+                        _floatWindow.Height = VM.Height;
+                    }
+
                     VM.IsFloating = true;
                 }
 
-                // drag за ВСЮ поверхность
-                Root.MouseLeftButtonDown += Root_MouseLeftButtonDown;
-                PreviewMouseMove += Root_MouseMove;
-                PreviewMouseLeftButtonUp += Root_MouseLeftButtonUp;
+            if (VM != null)
+            {
+                VM.PropertyChanged += VM_PropertyChanged;
+                RenderColored(VM.ContentText ?? string.Empty);
+            }
+
+            // drag за ВСЮ поверхность
+            // Стало: ловим туннелинг + даже если child уже Handled
+            AddHandler(UIElement.PreviewMouseLeftButtonDownEvent,
+                    new MouseButtonEventHandler(Root_MouseLeftButtonDown), handledEventsToo: true);
+                AddHandler(UIElement.PreviewMouseMoveEvent,
+                    new MouseEventHandler(Root_MouseMove), handledEventsToo: true);
+                AddHandler(UIElement.PreviewMouseLeftButtonUpEvent,
+                    new MouseButtonEventHandler(Root_MouseLeftButtonUp), handledEventsToo: true);
+
 
                 // прозрачность не-PIN (hover)
                 Root.MouseEnter += (_, __) => { _isPointerOver = true; UpdateOpacityState(); };
-                Root.MouseLeave += (_, __) => { _isPointerOver = false; UpdateOpacityState(); };
+                    Root.MouseLeave += (_, __) => { _isPointerOver = false; UpdateOpacityState(); };
 
                 ApplyPinVisualAndLayout();      // привести всё к текущему состоянию
                 UpdateOpacityState();           // стартовая прозрачность
@@ -120,12 +374,24 @@
 
             private void OnUnloaded(object? s, RoutedEventArgs e)
             {
-                Root.MouseLeftButtonDown -= Root_MouseLeftButtonDown;
-                PreviewMouseMove -= Root_MouseMove;
-                PreviewMouseLeftButtonUp -= Root_MouseLeftButtonUp;
+                if (VM != null) VM.PropertyChanged -= VM_PropertyChanged;
+
+                // Снимаем глобальные AddHandler
+                RemoveHandler(UIElement.PreviewMouseLeftButtonDownEvent,
+                    new MouseButtonEventHandler(Root_MouseLeftButtonDown));
+                RemoveHandler(UIElement.PreviewMouseMoveEvent,
+                    new MouseEventHandler(Root_MouseMove));
+                RemoveHandler(UIElement.PreviewMouseLeftButtonUpEvent,
+                    new MouseButtonEventHandler(Root_MouseLeftButtonUp));
 
                 _hoverWatch.Stop();
                 _floatWindow = null;
+            }
+
+            private void VM_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+            {
+                if (e.PropertyName == nameof(BubbleViewModel.ContentText))
+                    Dispatcher.BeginInvoke(() => RenderColored(VM.ContentText ?? string.Empty));
             }
 
             private BubbleHostCanvas? FindAncestorHost()
@@ -211,39 +477,43 @@
         // ======== Drag lifecycle ========
 
         private void Root_MouseLeftButtonDown(object? sender, MouseButtonEventArgs e)
-            {
-                if (IsPinned) return;
+        {
+            if (IsPinned) return;
 
-                var src = e.OriginalSource as DependencyObject;
+            var src = e.OriginalSource as DependencyObject;
 
             // исключаем клик по пину/кресту/редактору
-            if (IsWithin(src, PinBtn) || IsWithin(src, CloseBtn) || IsWithin(src, TitleEdit) || IsWithin(src, CopyBtn))
+            if (IsWithin(src, PinBtn) ||
+            IsWithin(src, CloseBtn) ||
+            IsWithin(src, CopyBtn) ||
+            IsWithin(src, ResizeBtn) ||
+            IsWithin(src, ResizeArea) ||
+            IsWithin(src, TitleEdit))
+            {
+                // даём событию пройти вглубь до Button, не мешаем Click
                 return;
+            }
 
             // даблклик по заголовку — редактирование
             if (IsWithin(src, HeaderTitleArea) && e is { ClickCount: 2 })
-                {
-                    BeginTitleEdit();
-                    e.Handled = true;
-                    return;
-                }
-
-                Focus();
-                CaptureMouse();
-
-                var local = e.GetPosition(this);
-                var screen = PointToScreen(local);
-
-                _localGrab = local;
-                _drag.OnDown(local, screen, DateTime.UtcNow);
-
-                ArmReset();
-                _lastScreen = screen;
-                _lastMoveAtUtc = DateTime.UtcNow;
-                _hoverWatch.Start();
-
-                UpdateOpacityState(); // старт drag
+            {
+                BeginTitleEdit();
+                e.Handled = true;
+                return;
             }
+
+            Focus();
+            CaptureMouse();
+            var local = e.GetPosition(this);
+            var screen = PointToScreen(local);
+            _localGrab = local;
+            _drag.OnDown(local, screen, DateTime.UtcNow);
+            ArmReset();
+            _lastScreen = screen;
+            _lastMoveAtUtc = DateTime.UtcNow;
+            _hoverWatch.Start();
+            UpdateOpacityState();
+        }
 
             private void Root_MouseMove(object? sender, MouseEventArgs e)
             {
@@ -351,6 +621,12 @@
 
                         host.AddBubble(this, targetTL);
                         host.UpdateLayout();
+
+                        // Вернулись на холст — тут уже контрол сам хранит размер
+                        Width = VM.Width;
+                        Height = VM.Height;
+                        HorizontalAlignment = HorizontalAlignment.Left;
+                        VerticalAlignment = VerticalAlignment.Top;
 
                         Canvas.SetLeft(this, targetTL.X);
                         Canvas.SetTop(this, targetTL.Y);
