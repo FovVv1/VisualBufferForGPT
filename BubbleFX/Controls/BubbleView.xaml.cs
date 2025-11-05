@@ -1,12 +1,17 @@
 ﻿using System;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using VisualBuffer.BubbleFX.Models;
 using VisualBuffer.BubbleFX.UI.Bubble;
@@ -14,15 +19,14 @@ using VisualBuffer.BubbleFX.UI.Canvas;
 using VisualBuffer.BubbleFX.UI.Insert;
 using VisualBuffer.BubbleFX.Utils;
 using VisualBuffer.Diagnostics;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Text.RegularExpressions;
-using System.Windows.Documents;
 
 namespace VisualBuffer.BubbleFX.Controls
     {
         public partial class BubbleView : UserControl
         {
+        public FrameworkElement PinClickTarget => PinBtn;
+
+
         private static readonly Regex Rx = new(
                 @"(?<url>https?://\S+)" +
                 @"|(?<comment>//.*?$)" +
@@ -148,8 +152,13 @@ namespace VisualBuffer.BubbleFX.Controls
             {
                 var view = (BubbleView)d;
                 view.ApplyPinVisualAndLayout();
-                view.UpdateOpacityState(); // чтобы сразу обновить Root
-            }
+                view.UpdateOpacityState();
+
+                view._floatWindow ??= Window.GetWindow(view) as BubbleWindow;
+                if (view._floatWindow != null)
+                    view._floatWindow.ClickThroughWhenPinned = view.IsPinned && view.VM.IsFloating;
+        }
+
 
             private void ResizeBtn_Click(object sender, RoutedEventArgs e)
             {
@@ -346,7 +355,11 @@ namespace VisualBuffer.BubbleFX.Controls
                     }
 
                     VM.IsFloating = true;
-                }
+
+                    _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
+                    if (_floatWindow != null)
+                        _floatWindow.ClickThroughWhenPinned = IsPinned && VM.IsFloating;
+            }
 
             if (VM != null)
             {
@@ -354,9 +367,9 @@ namespace VisualBuffer.BubbleFX.Controls
                 RenderColored(VM.ContentText ?? string.Empty);
             }
 
-            // drag за ВСЮ поверхность
-            // Стало: ловим туннелинг + даже если child уже Handled
-            AddHandler(UIElement.PreviewMouseLeftButtonDownEvent,
+                // drag за ВСЮ поверхность
+                // Стало: ловим туннелинг + даже если child уже Handled
+                AddHandler(UIElement.PreviewMouseLeftButtonDownEvent,
                     new MouseButtonEventHandler(Root_MouseLeftButtonDown), handledEventsToo: true);
                 AddHandler(UIElement.PreviewMouseMoveEvent,
                     new MouseEventHandler(Root_MouseMove), handledEventsToo: true);
@@ -445,7 +458,17 @@ namespace VisualBuffer.BubbleFX.Controls
                 TopPanelBackground.Opacity = OPACITY_PIN_OTHERS;
                 ResizeArea.Opacity = OPACITY_PIN_OTHERS;
 
-                
+                HeaderTitleArea.IsHitTestVisible = false;
+                CloseArea.IsHitTestVisible = false;
+                CopyArea.IsHitTestVisible = false;
+                ResizeArea.IsHitTestVisible = false;
+                BubbleBackground.IsHitTestVisible = false;
+                ContentArea.IsHitTestVisible = false;
+                TopPanelBackground.IsHitTestVisible = false;
+
+                // КЛЮЧЕВОЕ: Transparent ловит клики, null — пропускает
+                Root.Background = null;
+
                 // сузить ЗОНУ контента вдвое
                 Dispatcher.BeginInvoke(() =>
                 {
@@ -467,6 +490,17 @@ namespace VisualBuffer.BubbleFX.Controls
                 TopPanelBackground.Opacity = 1.0;
                 ResizeArea.Opacity = 1.0;
                 PinArea.Opacity = 1.0;
+
+                // Возвращаем как было
+                HeaderTitleArea.IsHitTestVisible = true;
+                CloseArea.IsHitTestVisible = true;
+                CopyArea.IsHitTestVisible = true;
+                ResizeArea.IsHitTestVisible = true;
+                BubbleBackground.IsHitTestVisible = true;
+                ContentArea.IsHitTestVisible = true;
+                TopPanelBackground.IsHitTestVisible = true;
+
+                Root.Background = Brushes.Transparent;
 
                 // вернуть «звёздочку» строке контента и ограничения скролла
                 ContentRow.Height = _contentStar;
@@ -590,7 +624,11 @@ namespace VisualBuffer.BubbleFX.Controls
                             _floatWindow.Show();
                             VM.IsFloating = true;
 
-                            if (!IsMouseCaptured) CaptureMouse();
+
+                            // ВАЖНО: включить click-through, если pinned
+                            _floatWindow.ClickThroughWhenPinned = IsPinned;
+
+                        if (!IsMouseCaptured) CaptureMouse();
                             UpdateOpacityState();
                         }
                     }
@@ -862,15 +900,16 @@ namespace VisualBuffer.BubbleFX.Controls
 
             // ======== Утилиты ========
 
+
             private static bool IsWithin(DependencyObject? src, FrameworkElement? target)
             {
                 if (src is null || target is null) return false;
-                for (var d = src; d != null; d = VisualTreeHelper.GetParent(d))
+                for (var d = src; d != null; d = ParentOf(d))
                     if (ReferenceEquals(d, target)) return true;
                 return false;
             }
 
-            private static double Distance2(Point a, Point b)
+        private static double Distance2(Point a, Point b)
             {
                 var dx = a.X - b.X; var dy = a.Y - b.Y;
                 return dx * dx + dy * dy;
@@ -924,5 +963,25 @@ namespace VisualBuffer.BubbleFX.Controls
                 var sb = new StringBuilder(256);
                 return GetClassName(h, sb, sb.Capacity) != 0 ? sb.ToString() : "";
             }
+
+            private static DependencyObject? ParentOf(DependencyObject? d)
+            {
+                if (d is null) return null;
+
+                // Визуальное дерево
+                if (d is Visual || d is Visual3D)
+                    return VisualTreeHelper.GetParent(d);
+
+                // Текстовые/документные элементы (Run/Inline/Paragraph/…)
+                if (d is FrameworkContentElement fce)
+                    return fce.Parent; // доступен у FCE (TextElement/Inline и т.п.)
+
+                if (d is ContentElement ce)
+                    return ContentOperations.GetParent(ce); // для базового ContentElement
+
+                // Фоллбэк — логическое дерево
+                return LogicalTreeHelper.GetParent(d);
+            }
+
         }
-    }
+}
