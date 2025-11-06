@@ -24,72 +24,73 @@ namespace VisualBuffer.BubbleFX.Controls
     {
         public partial class BubbleView : UserControl
         {
-        public FrameworkElement PinClickTarget => PinBtn;
+            public FrameworkElement PinClickTarget => PinBtn;
+            // BubbleView.cs (внутри класса)
+            private BubbleResizeWindow? _resizeHost;
 
+            private static readonly Regex Rx = new(
+                    @"(?<url>https?://\S+)" +
+                    @"|(?<comment>//.*?$)" +
+                    @"|(?<str>""(?:\\.|[^""])*"")" +
+                    @"|(?<num>\b\d+(\.\d+)?\b)" +
+                    @"|(?<kw>\b(class|public|private|protected|internal|static|void|int|string|var|new|return|if|else|for|foreach|while|switch|case|true|false|null)\b)" +
+                    @"|(?<at>@\w+)" +
+                    @"|(?<hash>#\w+)",
+                    RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
-        private static readonly Regex Rx = new(
-                @"(?<url>https?://\S+)" +
-                @"|(?<comment>//.*?$)" +
-                @"|(?<str>""(?:\\.|[^""])*"")" +
-                @"|(?<num>\b\d+(\.\d+)?\b)" +
-                @"|(?<kw>\b(class|public|private|protected|internal|static|void|int|string|var|new|return|if|else|for|foreach|while|switch|case|true|false|null)\b)" +
-                @"|(?<at>@\w+)" +
-                @"|(?<hash>#\w+)",
-                RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
-
-        private void RenderColored(string text)
-        {
-            ContentTextBlock.Inlines.Clear();
-            int i = 0;
-
-            foreach (Match m in Rx.Matches(text))
+            private void RenderColored(string text)
             {
-                if (m.Index > i) AddPlain(text.Substring(i, m.Index - i));
+                ContentTextBlock.Inlines.Clear();
+                int i = 0;
 
-                Inline colored = m.Groups["url"].Success ? MakeLink(m.Value) :
-                                 m.Groups["comment"].Success ? MakeRun(m.Value, "#6A9955") :
-                                 m.Groups["str"].Success ? MakeRun(m.Value, "#CE9178") :
-                                 m.Groups["kw"].Success ? MakeRun(m.Value, "#569CD6", FontWeights.SemiBold) :
-                                 m.Groups["num"].Success ? MakeRun(m.Value, "#B5CEA8") :
-                                 m.Groups["at"].Success ? MakeRun(m.Value, "#D7BA7D") :
-                                 m.Groups["hash"].Success ? MakeRun(m.Value, "#4EC9B0") :
-                                 new Run(m.Value);
+                foreach (Match m in Rx.Matches(text))
+                {
+                    if (m.Index > i) AddPlain(text.Substring(i, m.Index - i));
 
-                ContentTextBlock.Inlines.Add(colored);
-                i = m.Index + m.Length;
+                    Inline colored = m.Groups["url"].Success ? MakeLink(m.Value) :
+                                     m.Groups["comment"].Success ? MakeRun(m.Value, "#6A9955") :
+                                     m.Groups["str"].Success ? MakeRun(m.Value, "#CE9178") :
+                                     m.Groups["kw"].Success ? MakeRun(m.Value, "#569CD6", FontWeights.SemiBold) :
+                                     m.Groups["num"].Success ? MakeRun(m.Value, "#B5CEA8") :
+                                     m.Groups["at"].Success ? MakeRun(m.Value, "#D7BA7D") :
+                                     m.Groups["hash"].Success ? MakeRun(m.Value, "#4EC9B0") :
+                                     new Run(m.Value);
+
+                    ContentTextBlock.Inlines.Add(colored);
+                    i = m.Index + m.Length;
+                }
+                if (i < text.Length) AddPlain(text.Substring(i));
             }
-            if (i < text.Length) AddPlain(text.Substring(i));
-        }
 
-        private Inline MakeRun(string s, string hex, FontWeight? weight = null)
-        {
-            return new Run(s)
+            private Inline MakeRun(string s, string hex, FontWeight? weight = null)
             {
-                Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!,
-                FontWeight = weight ?? FontWeights.Normal
-            };
-        }
-
-        private Inline MakeLink(string url)
-        {
-            var link = new Hyperlink(new Run(url)) { NavigateUri = new Uri(url) };
-            link.RequestNavigate += (_, __) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            link.Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString("#4FC1FF")!;
-            link.TextDecorations = null;
-            return link;
-        }
-
-        // добавляет обычный текст с переносами строк
-        private void AddPlain(string s)
-        {
-            var parts = s.Split('\n');
-            for (int n = 0; n < parts.Length; n++)
-            {
-                ContentTextBlock.Inlines.Add(new Run(parts[n]));
-                if (n < parts.Length - 1) ContentTextBlock.Inlines.Add(new LineBreak());
+                return new Run(s)
+                {
+                    Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!,
+                    FontWeight = weight ?? FontWeights.Normal
+                };
             }
-        }
-        public BubbleViewModel VM => (BubbleViewModel)DataContext;
+
+            private Inline MakeLink(string url)
+            {
+                var link = new Hyperlink(new Run(url)) { NavigateUri = new Uri(url) };
+                link.RequestNavigate += (_, __) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                link.Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString("#4FC1FF")!;
+                link.TextDecorations = null;
+                return link;
+            }
+
+            // добавляет обычный текст с переносами строк
+            private void AddPlain(string s)
+            {
+                var parts = s.Split('\n');
+                for (int n = 0; n < parts.Length; n++)
+                {
+                    ContentTextBlock.Inlines.Add(new Run(parts[n]));
+                    if (n < parts.Length - 1) ContentTextBlock.Inlines.Add(new LineBreak());
+                }
+            }
+            public BubbleViewModel VM => (BubbleViewModel)DataContext;
 
             public bool IsPinned
             {
@@ -147,6 +148,76 @@ namespace VisualBuffer.BubbleFX.Controls
                 _hoverWatch.Tick += HoverWatch_Tick;
             }
 
+            // Войти в режим нативного ресайза
+            private void EnterNativeResizeHost()
+            {
+                if (!VM.IsFloating) return;
+
+                // фиксируем ссылку ДО перепривязки контента
+                var oldHost = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
+                if (oldHost == null) return;
+
+                // геометрия
+                var left = oldHost.Left;
+                var top = oldHost.Top;
+                var width = oldHost.Width;
+                var height = oldHost.Height;
+
+                // создаём обычное окно для ресайза
+                _resizeHost = new BubbleResizeWindow
+                {
+                    Left = left,
+                    Top = top,
+                    Width = width,
+                    Height = height
+                };
+                _resizeHost.ResizeMoveFinished += (_, __) => ExitNativeResizeHost();
+
+                // пересаживаем контент
+                oldHost.Content = null;           // здесь вызовется Unloaded и _floatWindow станет null — это ОК,
+                _resizeHost.Content = this;       // потому что мы держим oldHost локально
+                _resizeHost.Show();
+
+                // закрываем старое окно после перепривязки — безопасно
+                Dispatcher.BeginInvoke(new Action(() => oldHost.Close()), DispatcherPriority.Background);
+
+                _floatWindow = null;              // явно: в режиме ресайза нас больше не хостит BubbleWindow
+            }
+
+            // Выйти из режима нативного ресайза (вернуть в layered BubbleWindow)
+            private void ExitNativeResizeHost()
+            {
+                if (_resizeHost == null) return;
+
+                var left = _resizeHost.Left;
+                var top = _resizeHost.Top;
+                var width = _resizeHost.Width;
+                var height = _resizeHost.Height;
+
+                // Создаём заново layered-окно
+                var back = new BubbleWindow
+                {
+                    ShowInTaskbar = false,
+                    Topmost = true,
+                    Width = width,
+                    Height = height
+                };
+                back.Left = left; back.Top = top;
+
+                back.Content = this;
+                back.Show();
+
+                // Если PIN был включён — восстановим клик-тру
+                back.ClickThroughWhenPinned = IsPinned && VM.IsFloating;
+
+                _resizeHost.Content = null;
+                _resizeHost.Close();
+                _resizeHost = null;
+
+                
+
+                _floatWindow = back;
+            }
 
             private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
             {
@@ -157,15 +228,17 @@ namespace VisualBuffer.BubbleFX.Controls
                 view._floatWindow ??= Window.GetWindow(view) as BubbleWindow;
                 if (view._floatWindow != null)
                     view._floatWindow.ClickThroughWhenPinned = view.IsPinned && view.VM.IsFloating;
-        }
+            }
 
 
             private void ResizeBtn_Click(object sender, RoutedEventArgs e)
             {
-                if (_isAutoSized) RestoreMiniSize();
-                else AutoResizeToContent();
+                if (VM.IsFloating)
+                    EnterNativeResizeHost();
+                else
+                    AutoResizeToContent(); // как было для докнутого
             }
-            
+
             private void RestoreMiniSize()
             {
                 double w = Math.Max(MinWidth, _savedMiniW > 0 ? _savedMiniW : 300);
