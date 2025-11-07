@@ -21,225 +21,368 @@ using VisualBuffer.BubbleFX.Utils;
 using VisualBuffer.Diagnostics;
 
 namespace VisualBuffer.BubbleFX.Controls
+{
+    public partial class BubbleView : UserControl
     {
-        public partial class BubbleView : UserControl
+        private readonly Logger.Log _log = Logger.Create("BubbleView");
+        public FrameworkElement PinClickTarget => PinBtn;
+        // BubbleView.cs (внутри класса)
+        private BubbleResizeWindow? _resizeHost;
+        private bool _inResizeMode;               // сейчас в режиме ресайза
+        private bool _exitingToContent;           // нажали «Показать контент»
+
+
+        private static readonly Regex Rx = new(
+                @"(?<url>https?://\S+)" +
+                @"|(?<comment>//.*?$)" +
+                @"|(?<str>""(?:\\.|[^""])*"")" +
+                @"|(?<num>\b\d+(\.\d+)?\b)" +
+                @"|(?<kw>\b(class|public|private|protected|internal|static|void|int|string|var|new|return|if|else|for|foreach|while|switch|case|true|false|null)\b)" +
+                @"|(?<at>@\w+)" +
+                @"|(?<hash>#\w+)",
+                RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+        private void RenderColored(string text)
         {
-            public FrameworkElement PinClickTarget => PinBtn;
-            // BubbleView.cs (внутри класса)
-            private BubbleResizeWindow? _resizeHost;
+            ContentTextBlock.Inlines.Clear();
+            int i = 0;
 
-            private static readonly Regex Rx = new(
-                    @"(?<url>https?://\S+)" +
-                    @"|(?<comment>//.*?$)" +
-                    @"|(?<str>""(?:\\.|[^""])*"")" +
-                    @"|(?<num>\b\d+(\.\d+)?\b)" +
-                    @"|(?<kw>\b(class|public|private|protected|internal|static|void|int|string|var|new|return|if|else|for|foreach|while|switch|case|true|false|null)\b)" +
-                    @"|(?<at>@\w+)" +
-                    @"|(?<hash>#\w+)",
-                    RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
-
-            private void RenderColored(string text)
+            foreach (Match m in Rx.Matches(text))
             {
-                ContentTextBlock.Inlines.Clear();
-                int i = 0;
+                if (m.Index > i) AddPlain(text.Substring(i, m.Index - i));
 
-                foreach (Match m in Rx.Matches(text))
+                Inline colored = m.Groups["url"].Success ? MakeLink(m.Value) :
+                                    m.Groups["comment"].Success ? MakeRun(m.Value, "#6A9955") :
+                                    m.Groups["str"].Success ? MakeRun(m.Value, "#CE9178") :
+                                    m.Groups["kw"].Success ? MakeRun(m.Value, "#569CD6", FontWeights.SemiBold) :
+                                    m.Groups["num"].Success ? MakeRun(m.Value, "#B5CEA8") :
+                                    m.Groups["at"].Success ? MakeRun(m.Value, "#D7BA7D") :
+                                    m.Groups["hash"].Success ? MakeRun(m.Value, "#4EC9B0") :
+                                    new Run(m.Value);
+
+                ContentTextBlock.Inlines.Add(colored);
+                i = m.Index + m.Length;
+            }
+            if (i < text.Length) AddPlain(text.Substring(i));
+        }
+
+        private Inline MakeRun(string s, string hex, FontWeight? weight = null)
+        {
+            return new Run(s)
+            {
+                Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!,
+                FontWeight = weight ?? FontWeights.Normal
+            };
+        }
+
+        private Inline MakeLink(string url)
+        {
+            var link = new Hyperlink(new Run(url)) { NavigateUri = new Uri(url) };
+            link.RequestNavigate += (_, __) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            link.Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString("#4FC1FF")!;
+            link.TextDecorations = null;
+            return link;
+        }
+
+        // добавляет обычный текст с переносами строк
+        private void AddPlain(string s)
+        {
+            var parts = s.Split('\n');
+            for (int n = 0; n < parts.Length; n++)
+            {
+                ContentTextBlock.Inlines.Add(new Run(parts[n]));
+                if (n < parts.Length - 1) ContentTextBlock.Inlines.Add(new LineBreak());
+            }
+        }
+        public BubbleViewModel VM => (BubbleViewModel)DataContext;
+
+        public bool IsPinned
+        {
+            get => (bool)GetValue(IsPinnedProperty);
+            set => SetValue(IsPinnedProperty, value);
+        }
+
+        public static readonly DependencyProperty IsPinnedProperty =
+                DependencyProperty.Register(nameof(IsPinned), typeof(bool), typeof(BubbleView), new PropertyMetadata(false, OnIsPinnedChanged));
+
+        private readonly Services.DragHelper _drag = new();
+        private BubbleWindow? _floatWindow;
+        private BubbleHostCanvas? _host;
+        private Point _localGrab;
+
+        private BubbleHostCanvas? _dockCandidate;
+        private Point _dockCandidateLocal;
+
+        private readonly DispatcherTimer _hoverWatch;
+        private Point _lastScreen;
+        private DateTime _lastMoveAtUtc;
+        private bool _hoverArmed;
+
+        // Title edit
+        private bool _isTitleEditing = false;
+        private string _titleBeforeEdit = "";
+
+        // Hover opacity (для НЕ pinned)
+        private bool _isPointerOver;
+        private const double OPACITY_IDLE = 0.5;
+        private const double OPACITY_HOVER = 1.0;
+        private const double OPACITY_DRAG = 0.25;
+
+        // ====== Auto-resize toggle ======
+        private bool _isAutoSized;
+        private double _savedMiniW, _savedMiniH;
+
+        // При PIN остальное почти невидимо, но PinIcon виден на 100%
+        private const double OPACITY_PIN_OTHERS = 0.2;
+
+        // Запомнить «звёздочку» контента, чтобы вернуть при unpin
+        private readonly GridLength _contentStar = new(1, GridUnitType.Star);
+
+        private const int HoverMs = 1000;
+        private const double MoveSlopPx = 3.0;
+
+        public BubbleView()
+        {
+            InitializeComponent();
+            Loaded += OnLoaded;
+            Unloaded += OnUnloaded;
+
+            _hoverWatch = new DispatcherTimer(DispatcherPriority.Background)
+            { Interval = TimeSpan.FromMilliseconds(120) };
+            _hoverWatch.Tick += HoverWatch_Tick;
+        }
+
+        private void EnterNativeResizeHost()
+        {
+            if (!VM.IsFloating) { _log.W("EnterNativeResizeHost: VM.IsFloating==false -> skip"); return; }
+
+            var oldHost = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
+            if (oldHost == null) { _log.W("EnterNativeResizeHost: oldHost=null -> abort"); return; }
+
+            _log.I($"EnterNativeResizeHost: oldHost.Showing={oldHost.IsVisible}, Size={oldHost.Width:0}x{oldHost.Height:0}, TL=({oldHost.Left:0},{oldHost.Top:0})");
+
+            double left = oldHost.Left;
+            double top = oldHost.Top;
+            double width = oldHost.Width;
+            double height = oldHost.Height;
+
+            _resizeHost = new BubbleResizeWindow
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = left,
+                Top = top,
+                Width = width,
+                Height = height,
+                Topmost = oldHost.Topmost,
+                ShowInTaskbar = false
+            };
+
+            _resizeHost.Init(VM?.Title ?? "Bubble", onExitShowContent: ExitNativeResizeHost);
+
+            _resizeHost.Closed += (_, __) =>
+            {
+                _log.I($"ResizeHost.Closed: ExitByShowContent={_resizeHost?.ExitByShowContent}");
+                if (_exitingToContent)
                 {
-                    if (m.Index > i) AddPlain(text.Substring(i, m.Index - i));
-
-                    Inline colored = m.Groups["url"].Success ? MakeLink(m.Value) :
-                                     m.Groups["comment"].Success ? MakeRun(m.Value, "#6A9955") :
-                                     m.Groups["str"].Success ? MakeRun(m.Value, "#CE9178") :
-                                     m.Groups["kw"].Success ? MakeRun(m.Value, "#569CD6", FontWeights.SemiBold) :
-                                     m.Groups["num"].Success ? MakeRun(m.Value, "#B5CEA8") :
-                                     m.Groups["at"].Success ? MakeRun(m.Value, "#D7BA7D") :
-                                     m.Groups["hash"].Success ? MakeRun(m.Value, "#4EC9B0") :
-                                     new Run(m.Value);
-
-                    ContentTextBlock.Inlines.Add(colored);
-                    i = m.Index + m.Length;
+                    _log.D("ResizeHost.Closed: already exiting to content -> ignore");
+                    return;
                 }
-                if (i < text.Length) AddPlain(text.Substring(i));
-            }
 
-            private Inline MakeRun(string s, string hex, FontWeight? weight = null)
-            {
-                return new Run(s)
+                try
                 {
-                    Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!,
-                    FontWeight = weight ?? FontWeights.Normal
-                };
-            }
-
-            private Inline MakeLink(string url)
-            {
-                var link = new Hyperlink(new Run(url)) { NavigateUri = new Uri(url) };
-                link.RequestNavigate += (_, __) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                link.Foreground = (SolidColorBrush)new BrushConverter().ConvertFromString("#4FC1FF")!;
-                link.TextDecorations = null;
-                return link;
-            }
-
-            // добавляет обычный текст с переносами строк
-            private void AddPlain(string s)
-            {
-                var parts = s.Split('\n');
-                for (int n = 0; n < parts.Length; n++)
-                {
-                    ContentTextBlock.Inlines.Add(new Run(parts[n]));
-                    if (n < parts.Length - 1) ContentTextBlock.Inlines.Add(new LineBreak());
+                    if (_floatWindow != null)
+                    {
+                        _log.D("ResizeHost.Closed: closing hidden oldHost");
+                        _floatWindow.Content = null;
+                        _floatWindow.Close();
+                        _floatWindow = null;
+                    }
                 }
-            }
-            public BubbleViewModel VM => (BubbleViewModel)DataContext;
+                catch (Exception ex) { _log.E("ResizeHost.Closed: error while closing oldHost", ex); }
 
-            public bool IsPinned
+                _inResizeMode = false;
+                _resizeHost = null;
+            };
+
+            _log.D("EnterNativeResizeHost: hiding oldHost");
+            oldHost.Hide();
+
+            _log.D("EnterNativeResizeHost: showing ResizeHost");
+            _resizeHost.Show();
+
+            var hwndR = new WindowInteropHelper(_resizeHost).Handle;
+            _log.I($"EnterNativeResizeHost: ResizeHost shown, hwnd=0x{hwndR.ToInt64():X}");
+
+            _floatWindow = oldHost;
+            _inResizeMode = true;
+            _exitingToContent = false;
+        }
+
+
+
+        public void CopyContent()
+        {
+            var text = VM?.ContentText ?? string.Empty;
+            if (string.IsNullOrEmpty(text)) { System.Media.SystemSounds.Beep.Play(); return; }
+            TrySetClipboardText(text, out _);
+        }
+
+        private static Window? PickVisibleOwner(Window? preferred)
+        {
+            try
             {
-                get => (bool)GetValue(IsPinnedProperty);
-                set => SetValue(IsPinnedProperty, value);
-            }
+                if (preferred is { IsVisible: true }) return preferred;
 
-            public static readonly DependencyProperty IsPinnedProperty =
-                 DependencyProperty.Register(nameof(IsPinned), typeof(bool), typeof(BubbleView), new PropertyMetadata(false, OnIsPinnedChanged));
+                var app = Application.Current;
+                if (app?.MainWindow is { IsVisible: true } mw) return mw;
 
-            private readonly Services.DragHelper _drag = new();
-            private BubbleWindow? _floatWindow;
-            private BubbleHostCanvas? _host;
-            private Point _localGrab;
+                // если у тебя есть CanvasWindow – можно попытаться отдать его:
+                // if (CanvasWindow.Instance is { IsVisible: true } cw) return cw;
 
-            private BubbleHostCanvas? _dockCandidate;
-            private Point _dockCandidateLocal;
-
-            private readonly DispatcherTimer _hoverWatch;
-            private Point _lastScreen;
-            private DateTime _lastMoveAtUtc;
-            private bool _hoverArmed;
-
-            // Title edit
-            private bool _isTitleEditing = false;
-            private string _titleBeforeEdit = "";
-
-            // Hover opacity (для НЕ pinned)
-            private bool _isPointerOver;
-            private const double OPACITY_IDLE = 0.5;
-            private const double OPACITY_HOVER = 1.0;
-            private const double OPACITY_DRAG = 0.25;
-
-            // ====== Auto-resize toggle ======
-            private bool _isAutoSized;
-            private double _savedMiniW, _savedMiniH;
-
-            // При PIN остальное почти невидимо, но PinIcon виден на 100%
-            private const double OPACITY_PIN_OTHERS = 0.2;
-
-            // Запомнить «звёздочку» контента, чтобы вернуть при unpin
-            private readonly GridLength _contentStar = new(1, GridUnitType.Star);
-
-            private const int HoverMs = 1000;
-            private const double MoveSlopPx = 3.0;
-
-            public BubbleView()
-            {
-                InitializeComponent();
-                Loaded += OnLoaded;
-                Unloaded += OnUnloaded;
-
-                _hoverWatch = new DispatcherTimer(DispatcherPriority.Background)
-                { Interval = TimeSpan.FromMilliseconds(120) };
-                _hoverWatch.Tick += HoverWatch_Tick;
-            }
-
-            // Войти в режим нативного ресайза
-            private void EnterNativeResizeHost()
-            {
-                if (!VM.IsFloating) return;
-
-                // фиксируем ссылку ДО перепривязки контента
-                var oldHost = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
-                if (oldHost == null) return;
-
-                // геометрия
-                var left = oldHost.Left;
-                var top = oldHost.Top;
-                var width = oldHost.Width;
-                var height = oldHost.Height;
-
-                // создаём обычное окно для ресайза
-                _resizeHost = new BubbleResizeWindow
+                if (app != null)
                 {
-                    Left = left,
-                    Top = top,
-                    Width = width,
-                    Height = height
-                };
-                _resizeHost.ResizeMoveFinished += (_, __) => ExitNativeResizeHost();
+                    foreach (Window w in app.Windows)
+                        if (w is { IsVisible: true }) return w;
+                }
 
-                // пересаживаем контент
-                oldHost.Content = null;           // здесь вызовется Unloaded и _floatWindow станет null — это ОК,
-                _resizeHost.Content = this;       // потому что мы держим oldHost локально
-                _resizeHost.Show();
+                return null; // owner не ставим – это нормально
+            }
+            catch { return null; }
+        }
 
-                // закрываем старое окно после перепривязки — безопасно
-                Dispatcher.BeginInvoke(new Action(() => oldHost.Close()), DispatcherPriority.Background);
 
-                _floatWindow = null;              // явно: в режиме ресайза нас больше не хостит BubbleWindow
+        private void ExitNativeResizeHost()
+        {
+            if (_resizeHost == null)
+            {
+                Logger.Warn("ExitNativeResizeHost: _resizeHost=null -> skip");
+                return;
             }
 
-            // Выйти из режима нативного ресайза (вернуть в layered BubbleWindow)
-            private void ExitNativeResizeHost()
+            _exitingToContent = true;
+
+            double left = _resizeHost.Left;
+            double top = _resizeHost.Top;
+            double width = _resizeHost.Width;
+            double height = _resizeHost.Height;
+
+            var oldHost = _floatWindow;
+            Logger.Info($"BubbleView | ExitNativeResizeHost: targetSize={width}x{height} at ({left},{top}); oldHost={(oldHost != null ? $"hwnd=0x{new WindowInteropHelper(oldHost).Handle.ToInt64():X}" : "null")}");
+
+            try
             {
-                if (_resizeHost == null) return;
+                if (oldHost != null)
+                {
+                    Logger.Debug("BubbleView | ExitNativeResizeHost: detaching content from hidden oldHost");
+                    oldHost.Content = null;
+                }
 
-                var left = _resizeHost.Left;
-                var top = _resizeHost.Top;
-                var width = _resizeHost.Width;
-                var height = _resizeHost.Height;
-
-                // Создаём заново layered-окно
                 var back = new BubbleWindow
                 {
                     ShowInTaskbar = false,
-                    Topmost = true,
+                    Topmost = _resizeHost.Topmost,
                     Width = width,
                     Height = height
                 };
-                back.Left = left; back.Top = top;
 
+                // ВАЖНО: обновить VM до показа, чтобы OnLoaded не откатил размеры
+                if (VM != null)
+                {
+                    VM.Width = width;
+                    VM.Height = height;
+                    Logger.Debug($"BubbleView | ExitNativeResizeHost: VM size set {VM.Width}x{VM.Height}");
+                }
+
+                // (опционально) если хранишь позицию для float – тоже обнови
+                // VM.X = left; VM.Y = top;
+
+                var safeOwner = PickVisibleOwner(oldHost?.Owner as Window);
+                if (safeOwner != null && safeOwner != _resizeHost)
+                {
+                    back.Owner = safeOwner;
+                    Logger.Info($"BubbleView | ExitNativeResizeHost: back.Owner set to {safeOwner.GetType().Name}");
+                }
+                else
+                {
+                    Logger.Info("BubbleView | ExitNativeResizeHost: owner not set (null or equals ResizeHost)");
+                }
+
+                // Контент растягивается
+                ClearValue(WidthProperty);
+                ClearValue(HeightProperty);
+                HorizontalAlignment = HorizontalAlignment.Stretch;
+                VerticalAlignment = VerticalAlignment.Stretch;
+
+                back.Left = left;
+                back.Top = top;
                 back.Content = this;
                 back.Show();
 
-                // Если PIN был включён — восстановим клик-тру
                 back.ClickThroughWhenPinned = IsPinned && VM.IsFloating;
 
-                _resizeHost.Content = null;
-                _resizeHost.Close();
-                _resizeHost = null;
+                Logger.Info($"BubbleView | ExitNativeResizeHost: new BubbleWindow shown, hwnd=0x{new WindowInteropHelper(back).Handle.ToInt64():X}");
 
-                
+                if (oldHost != null)
+                {
+                    Logger.Debug("BubbleView | ExitNativeResizeHost: closing old hidden BubbleWindow");
+                    try { oldHost.Close(); } catch { }
+                }
 
                 _floatWindow = back;
-            }
 
-            private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+                var toClose = _resizeHost;
+                _resizeHost = null;
+                _inResizeMode = false;
+
+                Logger.Debug("BubbleView | ExitNativeResizeHost: closing ResizeHost (resize window)");
+                try { toClose.Close(); } catch { }
+            }
+            catch (Exception ex)
             {
-                var view = (BubbleView)d;
-                view.ApplyPinVisualAndLayout();
-                view.UpdateOpacityState();
-
-                view._floatWindow ??= Window.GetWindow(view) as BubbleWindow;
-                if (view._floatWindow != null)
-                    view._floatWindow.ClickThroughWhenPinned = view.IsPinned && view.VM.IsFloating;
+                Logger.Error("BubbleView | ExitNativeResizeHost: exception", ex);
+                _inResizeMode = false;
+                try { oldHost?.Show(); } catch { }
             }
+        }
 
 
-            private void ResizeBtn_Click(object sender, RoutedEventArgs e)
-            {
-                if (VM.IsFloating)
-                    EnterNativeResizeHost();
-                else
-                    AutoResizeToContent(); // как было для докнутого
-            }
+        private static void OnIsPinnedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            var view = (BubbleView)d;
+            view.ApplyPinVisualAndLayout();
+            view.UpdateOpacityState();
 
-            private void RestoreMiniSize()
+            view._floatWindow ??= Window.GetWindow(view) as BubbleWindow;
+            if (view._floatWindow != null)
+                view._floatWindow.ClickThroughWhenPinned = view.IsPinned && view.VM.IsFloating;
+        }
+
+
+        private void ResizeBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_inResizeMode) EnterNativeResizeHost();  // выйти можно только кнопкой в резайз-окне
+        }
+
+
+        private void HideTopBarForResize(bool on)
+        {
+            var vis = on ? Visibility.Collapsed : Visibility.Visible;
+
+            TopPanelBackground.Visibility = vis;
+            PinArea.Visibility = vis;     // если нужно — можно оставить, тогда убери эту строку
+            CopyArea.Visibility = vis;     // переносим в заголовок — скрываем в теле
+            HeaderTitleArea.Visibility = vis;     // заголовок уедет в заголовок окна
+            ResizeArea.Visibility = vis;     // сама кнопка тоже уезжает в заголовок
+            CloseArea.Visibility = vis;
+
+            // строку заголовка можно схлопнуть, чтобы контент занял всё
+            HeaderRow.Height = on ? new GridLength(0) : new GridLength(25);
+        }
+
+
+
+
+        private void RestoreMiniSize()
             {
                 double w = Math.Max(MinWidth, _savedMiniW > 0 ? _savedMiniW : 300);
                 double h = Math.Max(MinHeight, _savedMiniH > 0 ? _savedMiniH : 180);
@@ -267,235 +410,235 @@ namespace VisualBuffer.BubbleFX.Controls
             }
 
 
-            private void AutoResizeToContent()
-            {
-                // Пусто? – просто чутка увеличим, но не ломаемся
-                var text = VM?.ContentText ?? string.Empty;
+        private void AutoResizeToContent()
+        {
+            // Пусто? – просто чутка увеличим, но не ломаемся
+            var text = VM?.ContentText ?? string.Empty;
 
-                // 1) Сохраним текущий компактный размер (чтобы было куда вернуться)
-                if (!_isAutoSized)
+            // 1) Сохраним текущий компактный размер (чтобы было куда вернуться)
+            if (!_isAutoSized)
+            {
+                _savedMiniW = VM.Width > 0 ? VM.Width : (Width > 0 ? Width : 300);
+                _savedMiniH = VM.Height > 0 ? VM.Height : (Height > 0 ? Height : 180);
+            }
+
+            // 2) Ограничения по "коробке", где живёт пузырь
+            const double marginPx = 24; // безопасный отступ от краёв
+            double maxBoxW, maxBoxH;
+
+            if (VM.IsFloating)
+            {
+                var wa = SystemParameters.WorkArea; // рабочая область монитора
+                maxBoxW = Math.Max(200, wa.Width * 0.6);   // не шире 60% экрана
+                maxBoxH = Math.Max(160, wa.Height * 0.75); // не выше 75% экрана
+            }
+            else
+            {
+                // Докнут на холст
+                var hostSize = _host?.RenderSize ?? new Size(1200, 800);
+                maxBoxW = Math.Max(200, hostSize.Width - marginPx * 2);
+                maxBoxH = Math.Max(160, hostSize.Height - marginPx * 2);
+            }
+
+            // 3) Посчитаем "хром" (рамки/отступы/хедер), который не относится к чистому тексту
+            //    Всё это уже есть в визуальном дереве — берём актуальные значения.
+            double headerH = HeaderRow.ActualHeight > 0 ? HeaderRow.ActualHeight : 25;
+
+            var rootBT = Root.BorderThickness;
+            var caPad = ContentArea.Padding;
+            var caBT = ContentArea.BorderThickness;
+            var tbMar = ContentTextBlock.Margin;
+
+            double chromeX = rootBT.Left + rootBT.Right +
+                                caBT.Left + caBT.Right +
+                                caPad.Left + caPad.Right +
+                                tbMar.Left + tbMar.Right;
+
+            double chromeY = rootBT.Top + rootBT.Bottom +
+                                caBT.Top + caBT.Bottom +
+                                caPad.Top + caPad.Bottom +
+                                tbMar.Top + tbMar.Bottom +
+                                headerH;
+
+            // 4) Сначала оценим "естественную" ширину самой длинной строки (без переноса),
+            //    потом ограничим её максимумом коробки.
+            var probe = new TextBlock
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap, // при бесконечной ширине переносов не будет
+                FontFamily = ContentTextBlock.FontFamily,
+                FontSize = ContentTextBlock.FontSize,
+                FontWeight = ContentTextBlock.FontWeight,
+                FontStyle = ContentTextBlock.FontStyle,
+                FontStretch = ContentTextBlock.FontStretch
+            };
+
+            // «непереносная» ширина строки
+            probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double naturalContentW = probe.DesiredSize.Width; // ширина самой длинной строки
+
+            // максимально допустимая ширина области для текста (без хрома)
+            double maxContentW = Math.Max(120, maxBoxW - chromeX);
+
+            // целевая ширина текста — не шире длинной строки и не шире лимита:
+            double targetContentW = Math.Min(naturalContentW, maxContentW);
+
+            // 5) Посчитаем высоту при этой ширине (тут уже перенос строк работает)
+            probe.Width = targetContentW;
+            probe.TextWrapping = TextWrapping.Wrap;
+            probe.Measure(new Size(targetContentW, double.PositiveInfinity));
+            double contentH = probe.DesiredSize.Height;
+
+            // 6) Складываем с «хромом», учитываем лимит по высоте коробки
+            double targetW = Math.Max(MinWidth, targetContentW + chromeX);
+            double targetH = Math.Max(MinHeight, Math.Min(maxBoxH, contentH + chromeY));
+
+            // 7) Применяем (в окно или сам контрол), синхронизируем VM
+            if (VM.IsFloating)
+            {
+                _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
+                if (_floatWindow != null)
                 {
-                    _savedMiniW = VM.Width > 0 ? VM.Width : (Width > 0 ? Width : 300);
-                    _savedMiniH = VM.Height > 0 ? VM.Height : (Height > 0 ? Height : 180);
+                    _floatWindow.Width = targetW;
+                    _floatWindow.Height = targetH;
+                }
+            }
+            else
+            {
+                Width = targetW;
+                Height = targetH;
+
+                // Если уехали за край холста — подвинем внутрь безопасной зоны
+                if (_host != null)
+                {
+                    var hostSize = _host.RenderSize;
+                    double x = Canvas.GetLeft(this);
+                    double y = Canvas.GetTop(this);
+                    x = Math.Min(Math.Max(marginPx, x), Math.Max(marginPx, hostSize.Width - targetW - marginPx));
+                    y = Math.Min(Math.Max(marginPx, y), Math.Max(marginPx, hostSize.Height - targetH - marginPx));
+                    Canvas.SetLeft(this, x);
+                    Canvas.SetTop(this, y);
+                    VM.X = x; VM.Y = y;
+                }
+            }
+
+            VM.Width = targetW;
+            VM.Height = targetH;
+
+            _isAutoSized = true;
+            UpdateLayout();
+        }
+
+        private void OnLoaded(object? s, RoutedEventArgs e)
+        {
+            _host = FindAncestorHost();
+
+            ApplyPinVisualAndLayout();
+            UpdateOpacityState();
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!_isAutoSized)             // только при первом появлении
+                {
+                    AutoResizeToContent();     // сохранит _savedMiniW/H как текущий мини-размер
+                    _isAutoSized = true;       // чтобы первая кнопка "Resize" свернула назад
+                }
+            }, DispatcherPriority.Loaded);
+
+            if (_host is not null)
+            {
+                Canvas.SetLeft(this, VM.X);
+                Canvas.SetTop(this, VM.Y);
+                Width = VM.Width;
+                Height = VM.Height;
+                VM.IsFloating = false;
+            }
+            else
+            {
+                _floatWindow = Window.GetWindow(this) as BubbleWindow;
+
+                // Контент должен ЗАПОЛНЯТЬ окно:
+                ClearValue(WidthProperty);
+                ClearValue(HeightProperty);
+                HorizontalAlignment = HorizontalAlignment.Stretch;
+                VerticalAlignment = VerticalAlignment.Stretch;
+
+                // Начальный размер задаём ОКНУ, а не контролу
+                if (_floatWindow != null)
+                {
+                    _floatWindow.Width = VM.Width;
+                    _floatWindow.Height = VM.Height;
                 }
 
-                // 2) Ограничения по "коробке", где живёт пузырь
-                const double marginPx = 24; // безопасный отступ от краёв
-                double maxBoxW, maxBoxH;
+                VM.IsFloating = true;
 
-                if (VM.IsFloating)
-                {
-                    var wa = SystemParameters.WorkArea; // рабочая область монитора
-                    maxBoxW = Math.Max(200, wa.Width * 0.6);   // не шире 60% экрана
-                    maxBoxH = Math.Max(160, wa.Height * 0.75); // не выше 75% экрана
-                }
-                else
-                {
-                    // Докнут на холст
-                    var hostSize = _host?.RenderSize ?? new Size(1200, 800);
-                    maxBoxW = Math.Max(200, hostSize.Width - marginPx * 2);
-                    maxBoxH = Math.Max(160, hostSize.Height - marginPx * 2);
-                }
+                _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
+                if (_floatWindow != null)
+                    _floatWindow.ClickThroughWhenPinned = IsPinned && VM.IsFloating;
+        }
 
-                // 3) Посчитаем "хром" (рамки/отступы/хедер), который не относится к чистому тексту
-                //    Всё это уже есть в визуальном дереве — берём актуальные значения.
-                double headerH = HeaderRow.ActualHeight > 0 ? HeaderRow.ActualHeight : 25;
+        if (VM != null)
+        {
+            VM.PropertyChanged += VM_PropertyChanged;
+            RenderColored(VM.ContentText ?? string.Empty);
+        }
 
-                var rootBT = Root.BorderThickness;
-                var caPad = ContentArea.Padding;
-                var caBT = ContentArea.BorderThickness;
-                var tbMar = ContentTextBlock.Margin;
+            // drag за ВСЮ поверхность
+            // Стало: ловим туннелинг + даже если child уже Handled
+            AddHandler(UIElement.PreviewMouseLeftButtonDownEvent,
+                new MouseButtonEventHandler(Root_MouseLeftButtonDown), handledEventsToo: true);
+            AddHandler(UIElement.PreviewMouseMoveEvent,
+                new MouseEventHandler(Root_MouseMove), handledEventsToo: true);
+            AddHandler(UIElement.PreviewMouseLeftButtonUpEvent,
+                new MouseButtonEventHandler(Root_MouseLeftButtonUp), handledEventsToo: true);
 
-                double chromeX = rootBT.Left + rootBT.Right +
-                                 caBT.Left + caBT.Right +
-                                 caPad.Left + caPad.Right +
-                                 tbMar.Left + tbMar.Right;
 
-                double chromeY = rootBT.Top + rootBT.Bottom +
-                                 caBT.Top + caBT.Bottom +
-                                 caPad.Top + caPad.Bottom +
-                                 tbMar.Top + tbMar.Bottom +
-                                 headerH;
+            // прозрачность не-PIN (hover)
+            Root.MouseEnter += (_, __) => { _isPointerOver = true; UpdateOpacityState(); };
+                Root.MouseLeave += (_, __) => { _isPointerOver = false; UpdateOpacityState(); };
 
-                // 4) Сначала оценим "естественную" ширину самой длинной строки (без переноса),
-                //    потом ограничим её максимумом коробки.
-                var probe = new TextBlock
-                {
-                    Text = text,
-                    TextWrapping = TextWrapping.Wrap, // при бесконечной ширине переносов не будет
-                    FontFamily = ContentTextBlock.FontFamily,
-                    FontSize = ContentTextBlock.FontSize,
-                    FontWeight = ContentTextBlock.FontWeight,
-                    FontStyle = ContentTextBlock.FontStyle,
-                    FontStretch = ContentTextBlock.FontStretch
-                };
+            ApplyPinVisualAndLayout();      // привести всё к текущему состоянию
+            UpdateOpacityState();           // стартовая прозрачность
+        }
 
-                // «непереносная» ширина строки
-                probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-                double naturalContentW = probe.DesiredSize.Width; // ширина самой длинной строки
+        private void OnUnloaded(object? s, RoutedEventArgs e)
+        {
+            if (VM != null) VM.PropertyChanged -= VM_PropertyChanged;
 
-                // максимально допустимая ширина области для текста (без хрома)
-                double maxContentW = Math.Max(120, maxBoxW - chromeX);
+            // Снимаем глобальные AddHandler
+            RemoveHandler(UIElement.PreviewMouseLeftButtonDownEvent,
+                new MouseButtonEventHandler(Root_MouseLeftButtonDown));
+            RemoveHandler(UIElement.PreviewMouseMoveEvent,
+                new MouseEventHandler(Root_MouseMove));
+            RemoveHandler(UIElement.PreviewMouseLeftButtonUpEvent,
+                new MouseButtonEventHandler(Root_MouseLeftButtonUp));
 
-                // целевая ширина текста — не шире длинной строки и не шире лимита:
-                double targetContentW = Math.Min(naturalContentW, maxContentW);
+            _hoverWatch.Stop();
+            _floatWindow = null;
+        }
 
-                // 5) Посчитаем высоту при этой ширине (тут уже перенос строк работает)
-                probe.Width = targetContentW;
-                probe.TextWrapping = TextWrapping.Wrap;
-                probe.Measure(new Size(targetContentW, double.PositiveInfinity));
-                double contentH = probe.DesiredSize.Height;
+        private void VM_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(BubbleViewModel.ContentText))
+                Dispatcher.BeginInvoke(() => RenderColored(VM.ContentText ?? string.Empty));
+        }
 
-                // 6) Складываем с «хромом», учитываем лимит по высоте коробки
-                double targetW = Math.Max(MinWidth, targetContentW + chromeX);
-                double targetH = Math.Max(MinHeight, Math.Min(maxBoxH, contentH + chromeY));
-
-                // 7) Применяем (в окно или сам контрол), синхронизируем VM
-                if (VM.IsFloating)
-                {
-                    _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
-                    if (_floatWindow != null)
-                    {
-                        _floatWindow.Width = targetW;
-                        _floatWindow.Height = targetH;
-                    }
-                }
-                else
-                {
-                    Width = targetW;
-                    Height = targetH;
-
-                    // Если уехали за край холста — подвинем внутрь безопасной зоны
-                    if (_host != null)
-                    {
-                        var hostSize = _host.RenderSize;
-                        double x = Canvas.GetLeft(this);
-                        double y = Canvas.GetTop(this);
-                        x = Math.Min(Math.Max(marginPx, x), Math.Max(marginPx, hostSize.Width - targetW - marginPx));
-                        y = Math.Min(Math.Max(marginPx, y), Math.Max(marginPx, hostSize.Height - targetH - marginPx));
-                        Canvas.SetLeft(this, x);
-                        Canvas.SetTop(this, y);
-                        VM.X = x; VM.Y = y;
-                    }
-                }
-
-                VM.Width = targetW;
-                VM.Height = targetH;
-
-                _isAutoSized = true;
-                UpdateLayout();
-            }
-
-            private void OnLoaded(object? s, RoutedEventArgs e)
+        private BubbleHostCanvas? FindAncestorHost()
+        {
+            DependencyObject p = this;
+            while (p is not null)
             {
-                _host = FindAncestorHost();
-
-                ApplyPinVisualAndLayout();
-                UpdateOpacityState();
-
-                Dispatcher.BeginInvoke(() =>
-                {
-                    if (!_isAutoSized)             // только при первом появлении
-                    {
-                        AutoResizeToContent();     // сохранит _savedMiniW/H как текущий мини-размер
-                        _isAutoSized = true;       // чтобы первая кнопка "Resize" свернула назад
-                    }
-                }, DispatcherPriority.Loaded);
-
-                if (_host is not null)
-                {
-                    Canvas.SetLeft(this, VM.X);
-                    Canvas.SetTop(this, VM.Y);
-                    Width = VM.Width;
-                    Height = VM.Height;
-                    VM.IsFloating = false;
-                }
-                else
-                {
-                    _floatWindow = Window.GetWindow(this) as BubbleWindow;
-
-                    // Контент должен ЗАПОЛНЯТЬ окно:
-                    ClearValue(WidthProperty);
-                    ClearValue(HeightProperty);
-                    HorizontalAlignment = HorizontalAlignment.Stretch;
-                    VerticalAlignment = VerticalAlignment.Stretch;
-
-                    // Начальный размер задаём ОКНУ, а не контролу
-                    if (_floatWindow != null)
-                    {
-                        _floatWindow.Width = VM.Width;
-                        _floatWindow.Height = VM.Height;
-                    }
-
-                    VM.IsFloating = true;
-
-                    _floatWindow ??= Window.GetWindow(this) as BubbleWindow;
-                    if (_floatWindow != null)
-                        _floatWindow.ClickThroughWhenPinned = IsPinned && VM.IsFloating;
+                if (p is BubbleHostCanvas c) return c;
+                p = VisualTreeHelper.GetParent(p);
             }
+            return null;
+        }
 
-            if (VM != null)
-            {
-                VM.PropertyChanged += VM_PropertyChanged;
-                RenderColored(VM.ContentText ?? string.Empty);
-            }
-
-                // drag за ВСЮ поверхность
-                // Стало: ловим туннелинг + даже если child уже Handled
-                AddHandler(UIElement.PreviewMouseLeftButtonDownEvent,
-                    new MouseButtonEventHandler(Root_MouseLeftButtonDown), handledEventsToo: true);
-                AddHandler(UIElement.PreviewMouseMoveEvent,
-                    new MouseEventHandler(Root_MouseMove), handledEventsToo: true);
-                AddHandler(UIElement.PreviewMouseLeftButtonUpEvent,
-                    new MouseButtonEventHandler(Root_MouseLeftButtonUp), handledEventsToo: true);
-
-
-                // прозрачность не-PIN (hover)
-                Root.MouseEnter += (_, __) => { _isPointerOver = true; UpdateOpacityState(); };
-                    Root.MouseLeave += (_, __) => { _isPointerOver = false; UpdateOpacityState(); };
-
-                ApplyPinVisualAndLayout();      // привести всё к текущему состоянию
-                UpdateOpacityState();           // стартовая прозрачность
-            }
-
-            private void OnUnloaded(object? s, RoutedEventArgs e)
-            {
-                if (VM != null) VM.PropertyChanged -= VM_PropertyChanged;
-
-                // Снимаем глобальные AddHandler
-                RemoveHandler(UIElement.PreviewMouseLeftButtonDownEvent,
-                    new MouseButtonEventHandler(Root_MouseLeftButtonDown));
-                RemoveHandler(UIElement.PreviewMouseMoveEvent,
-                    new MouseEventHandler(Root_MouseMove));
-                RemoveHandler(UIElement.PreviewMouseLeftButtonUpEvent,
-                    new MouseButtonEventHandler(Root_MouseLeftButtonUp));
-
-                _hoverWatch.Stop();
-                _floatWindow = null;
-            }
-
-            private void VM_PropertyChanged(object? sender, PropertyChangedEventArgs e)
-            {
-                if (e.PropertyName == nameof(BubbleViewModel.ContentText))
-                    Dispatcher.BeginInvoke(() => RenderColored(VM.ContentText ?? string.Empty));
-            }
-
-            private BubbleHostCanvas? FindAncestorHost()
-            {
-                DependencyObject p = this;
-                while (p is not null)
-                {
-                    if (p is BubbleHostCanvas c) return c;
-                    p = VisualTreeHelper.GetParent(p);
-                }
-                return null;
-            }
-
-            // ======== PIN ========
-            private void PinBtn_Click(object sender, RoutedEventArgs e)
-            {
-                IsPinned = !IsPinned;
-            }
+        // ======== PIN ========
+        private void PinBtn_Click(object sender, RoutedEventArgs e)
+        {
+            IsPinned = !IsPinned;
+        }
 
 
         /// <summary>
@@ -622,303 +765,303 @@ namespace VisualBuffer.BubbleFX.Controls
             UpdateOpacityState();
         }
 
-            private void Root_MouseMove(object? sender, MouseEventArgs e)
+        private void Root_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (IsPinned || _isTitleEditing) return;
+            if (!_drag.IsDown) return;
+
+            var local = e.GetPosition(this);
+            var screen = PointToScreen(local);
+
+            var wasDragging = _drag.IsDragging;
+            _drag.MaybeBeginDrag(screen);
+            _drag.OnMove(screen);
+            if (_drag.IsDragging && !wasDragging) UpdateOpacityState();
+
+            if (!_drag.IsDragging) return;
+
+            if (Distance2(screen, _lastScreen) > MoveSlopPx * MoveSlopPx)
             {
-                if (IsPinned || _isTitleEditing) return;
-                if (!_drag.IsDown) return;
-
-                var local = e.GetPosition(this);
-                var screen = PointToScreen(local);
-
-                var wasDragging = _drag.IsDragging;
-                _drag.MaybeBeginDrag(screen);
-                _drag.OnMove(screen);
-                if (_drag.IsDragging && !wasDragging) UpdateOpacityState();
-
-                if (!_drag.IsDragging) return;
-
-                if (Distance2(screen, _lastScreen) > MoveSlopPx * MoveSlopPx)
-                {
-                    _lastScreen = screen;
-                    _lastMoveAtUtc = DateTime.UtcNow;
-                    ArmReset();
-                }
-
-                if (VM.IsFloating)
-                {
-                    var w = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
-                    if (w is not null)
-                    {
-                        var (sx, sy) = DpiUtil.GetDpiScale(w);
-                        w.Left = screen.X / sx - _localGrab.X;
-                        w.Top = screen.Y / sy - _localGrab.Y;
-                    }
-
-                    _dockCandidate = null;
-                    var host = CanvasWindow.Instance?.HostElement;
-                    if (host != null && BubbleHostCanvas.IsUsable(host) && host.IsScreenPointOverHost(screen))
-                    {
-                        var pLocal = host.ScreenToLocal(screen);
-                        _dockCandidate = host;
-                        _dockCandidateLocal = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
-                    }
-                }
-                else
-                {
-                    if (_host is not null)
-                    {
-                        var hostLocalAtCursor = _host.ScreenToLocal(screen);
-                        var newTopLeft = new Point(hostLocalAtCursor.X - _localGrab.X,
-                                                   hostLocalAtCursor.Y - _localGrab.Y);
-                        Canvas.SetLeft(this, newTopLeft.X);
-                        Canvas.SetTop(this, newTopLeft.Y);
-
-                        const double marginPx = 20;
-                        var hostRect = new Rect(new Point(0, 0), _host.RenderSize);
-                        var safe = Rect.Inflate(hostRect, -marginPx, -marginPx);
-                        var bubbleRect = new Rect(newTopLeft, new Size(ActualWidth, ActualHeight));
-
-                        if (!safe.Contains(bubbleRect))
-                        {
-                            _host.Children.Remove(this);
-                            var screenTL = _host.PointToScreen(newTopLeft);
-                            _host = null;
-
-                            _floatWindow = new BubbleWindow
-                            {
-                                Owner = Application.Current.MainWindow,
-                                Content = this,
-                                Topmost = true
-                            };
-
-                            var (sx, sy) = DpiUtil.GetDpiScale(_floatWindow);
-                            _floatWindow.Left = screenTL.X / sx;
-                            _floatWindow.Top = screenTL.Y / sy;
-                            _floatWindow.Show();
-                            VM.IsFloating = true;
-
-
-                            // ВАЖНО: включить click-through, если pinned
-                            _floatWindow.ClickThroughWhenPinned = IsPinned;
-
-                        if (!IsMouseCaptured) CaptureMouse();
-                            UpdateOpacityState();
-                        }
-                    }
-                }
+                _lastScreen = screen;
+                _lastMoveAtUtc = DateTime.UtcNow;
+                ArmReset();
             }
 
-            private void Root_MouseLeftButtonUp(object? sender, MouseButtonEventArgs e)
+            if (VM.IsFloating)
             {
-                if (IsMouseCaptured) ReleaseMouseCapture();
-
-                var wasTap = _drag.IsTapNow();
-                _hoverWatch.Stop();
-
-                if (VM.IsFloating)
+                var w = _floatWindow ?? (Window.GetWindow(this) as BubbleWindow);
+                if (w is not null)
                 {
-                    if (_dockCandidate != null)
-                    {
-                        var host = _dockCandidate;
-                        var pLocal = host.ScreenToLocal(_lastScreen);
-                        var targetTL = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
-
-                        if (_floatWindow is not null)
-                        {
-                            _floatWindow.Content = null;
-                            _floatWindow.Close();
-                            _floatWindow = null;
-                        }
-
-                        host.AddBubble(this, targetTL);
-                        host.UpdateLayout();
-
-                        // Вернулись на холст — тут уже контрол сам хранит размер
-                        Width = VM.Width;
-                        Height = VM.Height;
-                        HorizontalAlignment = HorizontalAlignment.Left;
-                        VerticalAlignment = VerticalAlignment.Top;
-
-                        Canvas.SetLeft(this, targetTL.X);
-                        Canvas.SetTop(this, targetTL.Y);
-                        VM.X = targetTL.X;
-                        VM.Y = targetTL.Y;
-
-                        _host = host;
-                        VM.IsFloating = false;
-                        Panel.SetZIndex(this, short.MaxValue - 1);
-                    }
-                }
-                else
-                {
-                    if (_drag.IsDragging && _host is not null)
-                    {
-                        VM.X = Canvas.GetLeft(this);
-                        VM.Y = Canvas.GetTop(this);
-                    }
+                    var (sx, sy) = DpiUtil.GetDpiScale(w);
+                    w.Left = screen.X / sx - _localGrab.X;
+                    w.Top = screen.Y / sy - _localGrab.Y;
                 }
 
                 _dockCandidate = null;
-
-                if (_hoverArmed)
+                var host = CanvasWindow.Instance?.HostElement;
+                if (host != null && BubbleHostCanvas.IsUsable(host) && host.IsScreenPointOverHost(screen))
                 {
-                    bool ok = TryPasteAtCursorThroughBubble(VM.ContentText ?? string.Empty);
-                    if (ok) RequestClose();
-                }
-
-                ArmReset();
-                _drag.Reset();
-                UpdateOpacityState();
-
-                if (wasTap) e.Handled = true;
-            }
-
-            private async void CopyBtn_Click(object sender, RoutedEventArgs e)
-            {
-                var text = VM?.ContentText ?? string.Empty;
-                if (string.IsNullOrEmpty(text))
-                {
-                    Logger.Info("Copy: ContentText is empty — nothing to copy.");
-                    System.Media.SystemSounds.Beep.Play();
-                    return;
-                }
-
-                if (TrySetClipboardText(text, out var err))
-                {
-                    Logger.Info($"Copy: copied to clipboard, len={text.Length}.");
-
-                    // Небольшой визуальный отклик на кнопке Copy
-                    //var oldBg = CopyArea.Background;
-                    //try
-                    //{
-                    //    CopyArea.Background = new SolidColorBrush(Color.FromArgb(0x66, 0x2E, 0x7D, 0x32)); // зелёный полупрозрачный
-                    //    await Task.Delay(150);
-                    //}
-                    //finally
-                    //{
-                    //    CopyArea.Background = oldBg;
-                    //}
-                }
-                else
-                {
-                    Logger.Error("Copy: clipboard set failed: " + err);
-                    System.Media.SystemSounds.Beep.Play(); 
+                    var pLocal = host.ScreenToLocal(screen);
+                    _dockCandidate = host;
+                    _dockCandidateLocal = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
                 }
             }
-
-            /// <summary>
-            /// Безопасно положить текст в буфер обмена (повторяем попытки, если занят).
-            /// </summary>
-            private static bool TrySetClipboardText(string text, out string? error)
+            else
             {
-                error = null;
-
-                // 6 попыток с нарастающей задержкой
-                for (int i = 0; i < 6; i++)
+                if (_host is not null)
                 {
-                    try
+                    var hostLocalAtCursor = _host.ScreenToLocal(screen);
+                    var newTopLeft = new Point(hostLocalAtCursor.X - _localGrab.X,
+                                                hostLocalAtCursor.Y - _localGrab.Y);
+                    Canvas.SetLeft(this, newTopLeft.X);
+                    Canvas.SetTop(this, newTopLeft.Y);
+
+                    const double marginPx = 20;
+                    var hostRect = new Rect(new Point(0, 0), _host.RenderSize);
+                    var safe = Rect.Inflate(hostRect, -marginPx, -marginPx);
+                    var bubbleRect = new Rect(newTopLeft, new Size(ActualWidth, ActualHeight));
+
+                    if (!safe.Contains(bubbleRect))
                     {
-                        // Для надёжности можно так:
-                        // Clipboard.SetDataObject(text, true);
-                        Clipboard.SetText(text);
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        error = ex.Message;
-                        Thread.Sleep(50 + i * 50);
+                        _host.Children.Remove(this);
+                        var screenTL = _host.PointToScreen(newTopLeft);
+                        _host = null;
+
+                        _floatWindow = new BubbleWindow
+                        {
+                            Owner = Application.Current.MainWindow,
+                            Content = this,
+                            Topmost = true
+                        };
+
+                        var (sx, sy) = DpiUtil.GetDpiScale(_floatWindow);
+                        _floatWindow.Left = screenTL.X / sx;
+                        _floatWindow.Top = screenTL.Y / sy;
+                        _floatWindow.Show();
+                        VM.IsFloating = true;
+
+
+                        // ВАЖНО: включить click-through, если pinned
+                        _floatWindow.ClickThroughWhenPinned = IsPinned;
+
+                    if (!IsMouseCaptured) CaptureMouse();
+                        UpdateOpacityState();
                     }
                 }
-                return false;
             }
+        }
 
-            // ======== Редактирование заголовка ========
+        private void Root_MouseLeftButtonUp(object? sender, MouseButtonEventArgs e)
+        {
+            if (IsMouseCaptured) ReleaseMouseCapture();
 
-            private void TitleText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+            var wasTap = _drag.IsTapNow();
+            _hoverWatch.Stop();
+
+            if (VM.IsFloating)
             {
-                if (IsPinned) return; // было: _isLocked
-                if (e.ClickCount == 2) { BeginTitleEdit(); e.Handled = true; }
-            }
-
-            private void BeginTitleEdit()
-            {
-                if (_isTitleEditing) return;
-                _isTitleEditing = true;
-                _titleBeforeEdit = VM?.Title ?? "";
-
-                TitleText.Visibility = Visibility.Collapsed;
-                TitleEdit.Visibility = Visibility.Visible;
-
-                TitleEdit.Focus();
-                TitleEdit.SelectAll();
-            }
-
-            private void CommitTitleEdit()
-            {
-                _isTitleEditing = false;
-                TitleEdit.Visibility = Visibility.Collapsed;
-                TitleText.Visibility = Visibility.Visible;
-            }
-
-            private void CancelTitleEdit()
-            {
-                if (VM != null) VM.Title = _titleBeforeEdit;
-                _isTitleEditing = false;
-                TitleEdit.Visibility = Visibility.Collapsed;
-                TitleText.Visibility = Visibility.Visible;
-            }
-
-            private void TitleEdit_KeyDown(object sender, KeyEventArgs e)
-            {
-                if (e.Key == Key.Enter) { CommitTitleEdit(); e.Handled = true; }
-                else if (e.Key == Key.Escape) { CancelTitleEdit(); e.Handled = true; }
-            }
-
-            private void TitleEdit_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
-            {
-                if (_isTitleEditing) CommitTitleEdit();
-            }
-
-            // ======== Hover-paste ========
-
-            private void HoverWatch_Tick(object? sender, EventArgs e)
-            {
-                if (!_drag.IsDragging) return;
-                if (!VM.IsFloating) return;
-                if (_hoverArmed) return;
-
-                var idleMs = (DateTime.UtcNow - _lastMoveAtUtc).TotalMilliseconds;
-                if (idleMs < HoverMs) return;
-
-                _hoverArmed = true;
-                Logger.Info("Bubble: Paste armed");
-            }
-
-            private void ArmReset() => _hoverArmed = false;
-
-            // ======== Прозрачность ========
-
-            private void UpdateOpacityState()
-            {
-                if (IsPinned)
+                if (_dockCandidate != null)
                 {
-                    // В PIN Root делаем 1.0 (иначе потушим саму PNG), «дымка» уже расставлена выше
-                    Root.Opacity = 1.0;
-                    return;
+                    var host = _dockCandidate;
+                    var pLocal = host.ScreenToLocal(_lastScreen);
+                    var targetTL = new Point(pLocal.X - _localGrab.X, pLocal.Y - _localGrab.Y);
+
+                    if (_floatWindow is not null)
+                    {
+                        _floatWindow.Content = null;
+                        _floatWindow.Close();
+                        _floatWindow = null;
+                    }
+
+                    host.AddBubble(this, targetTL);
+                    host.UpdateLayout();
+
+                    // Вернулись на холст — тут уже контрол сам хранит размер
+                    Width = VM.Width;
+                    Height = VM.Height;
+                    HorizontalAlignment = HorizontalAlignment.Left;
+                    VerticalAlignment = VerticalAlignment.Top;
+
+                    Canvas.SetLeft(this, targetTL.X);
+                    Canvas.SetTop(this, targetTL.Y);
+                    VM.X = targetTL.X;
+                    VM.Y = targetTL.Y;
+
+                    _host = host;
+                    VM.IsFloating = false;
+                    Panel.SetZIndex(this, short.MaxValue - 1);
                 }
-
-                double target;
-                if (_drag.IsDragging) target = OPACITY_DRAG;
-                else if (_isPointerOver) target = OPACITY_HOVER;
-                else target = OPACITY_IDLE;
-
-                Root.Opacity = target;
-
-                // на случай возврата из PIN — вернуть нормальную видимость
-                HeaderTitleArea.Opacity = 1.0;
-                CloseArea.Opacity = 1.0;
-                ContentArea.Opacity = 1.0;
             }
+            else
+            {
+                if (_drag.IsDragging && _host is not null)
+                {
+                    VM.X = Canvas.GetLeft(this);
+                    VM.Y = Canvas.GetTop(this);
+                }
+            }
+
+            _dockCandidate = null;
+
+            if (_hoverArmed)
+            {
+                bool ok = TryPasteAtCursorThroughBubble(VM.ContentText ?? string.Empty);
+                if (ok) RequestClose();
+            }
+
+            ArmReset();
+            _drag.Reset();
+            UpdateOpacityState();
+
+            if (wasTap) e.Handled = true;
+        }
+
+        private async void CopyBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var text = VM?.ContentText ?? string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                Logger.Info("Copy: ContentText is empty — nothing to copy.");
+                System.Media.SystemSounds.Beep.Play();
+                return;
+            }
+
+            if (TrySetClipboardText(text, out var err))
+            {
+                Logger.Info($"Copy: copied to clipboard, len={text.Length}.");
+
+                // Небольшой визуальный отклик на кнопке Copy
+                //var oldBg = CopyArea.Background;
+                //try
+                //{
+                //    CopyArea.Background = new SolidColorBrush(Color.FromArgb(0x66, 0x2E, 0x7D, 0x32)); // зелёный полупрозрачный
+                //    await Task.Delay(150);
+                //}
+                //finally
+                //{
+                //    CopyArea.Background = oldBg;
+                //}
+            }
+            else
+            {
+                Logger.Error("Copy: clipboard set failed: " + err);
+                System.Media.SystemSounds.Beep.Play(); 
+            }
+        }
+
+        /// <summary>
+        /// Безопасно положить текст в буфер обмена (повторяем попытки, если занят).
+        /// </summary>
+        private static bool TrySetClipboardText(string text, out string? error)
+        {
+            error = null;
+
+            // 6 попыток с нарастающей задержкой
+            for (int i = 0; i < 6; i++)
+            {
+                try
+                {
+                    // Для надёжности можно так:
+                    // Clipboard.SetDataObject(text, true);
+                    Clipboard.SetText(text);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    Thread.Sleep(50 + i * 50);
+                }
+            }
+            return false;
+        }
+
+        // ======== Редактирование заголовка ========
+
+        private void TitleText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (IsPinned) return; // было: _isLocked
+            if (e.ClickCount == 2) { BeginTitleEdit(); e.Handled = true; }
+        }
+
+        private void BeginTitleEdit()
+        {
+            if (_isTitleEditing) return;
+            _isTitleEditing = true;
+            _titleBeforeEdit = VM?.Title ?? "";
+
+            TitleText.Visibility = Visibility.Collapsed;
+            TitleEdit.Visibility = Visibility.Visible;
+
+            TitleEdit.Focus();
+            TitleEdit.SelectAll();
+        }
+
+        private void CommitTitleEdit()
+        {
+            _isTitleEditing = false;
+            TitleEdit.Visibility = Visibility.Collapsed;
+            TitleText.Visibility = Visibility.Visible;
+        }
+
+        private void CancelTitleEdit()
+        {
+            if (VM != null) VM.Title = _titleBeforeEdit;
+            _isTitleEditing = false;
+            TitleEdit.Visibility = Visibility.Collapsed;
+            TitleText.Visibility = Visibility.Visible;
+        }
+
+        private void TitleEdit_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter) { CommitTitleEdit(); e.Handled = true; }
+            else if (e.Key == Key.Escape) { CancelTitleEdit(); e.Handled = true; }
+        }
+
+        private void TitleEdit_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (_isTitleEditing) CommitTitleEdit();
+        }
+
+        // ======== Hover-paste ========
+
+        private void HoverWatch_Tick(object? sender, EventArgs e)
+        {
+            if (!_drag.IsDragging) return;
+            if (!VM.IsFloating) return;
+            if (_hoverArmed) return;
+
+            var idleMs = (DateTime.UtcNow - _lastMoveAtUtc).TotalMilliseconds;
+            if (idleMs < HoverMs) return;
+
+            _hoverArmed = true;
+            Logger.Info("Bubble: Paste armed");
+        }
+
+        private void ArmReset() => _hoverArmed = false;
+
+        // ======== Прозрачность ========
+
+        private void UpdateOpacityState()
+        {
+            if (IsPinned)
+            {
+                // В PIN Root делаем 1.0 (иначе потушим саму PNG), «дымка» уже расставлена выше
+                Root.Opacity = 1.0;
+                return;
+            }
+
+            double target;
+            if (_drag.IsDragging) target = OPACITY_DRAG;
+            else if (_isPointerOver) target = OPACITY_HOVER;
+            else target = OPACITY_IDLE;
+
+            Root.Opacity = target;
+
+            // на случай возврата из PIN — вернуть нормальную видимость
+            HeaderTitleArea.Opacity = 1.0;
+            CloseArea.Opacity = 1.0;
+            ContentArea.Opacity = 1.0;
+        }
 
         // ======== Вставка «сквозь» пузырь ========
 
@@ -983,78 +1126,78 @@ namespace VisualBuffer.BubbleFX.Controls
             }
 
         private static double Distance2(Point a, Point b)
-            {
-                var dx = a.X - b.X; var dy = a.Y - b.Y;
-                return dx * dx + dy * dy;
-            }
-
-            private void RequestClose()
-            {
-                if (VM.IsFloating)
-                {
-                    if (_floatWindow is not null)
-                    {
-                        _floatWindow.Content = null;
-                        _floatWindow.Close();
-                        _floatWindow = null;
-                    }
-                }
-                else
-                {
-                    _host?.Children.Remove(this);
-                }
-            }
-
-            private void CloseBtn_Click(object sender, RoutedEventArgs e) => RequestClose();
-
-            // ======== Win32 ========
-
-            private const int GWL_EXSTYLE = -20;
-            private const int WS_EX_TRANSPARENT = 0x00000020;
-            private const int WS_EX_LAYERED = 0x00080000;
-            private const uint GA_ROOT = 2;
-
-            [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X; public int Y; }
-
-            [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
-            [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT pt);
-            [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
-            [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int cap);
-            [DllImport("user32.dll", EntryPoint = "GetWindowLong")] private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
-            [DllImport("user32.dll", EntryPoint = "SetWindowLong")] private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
-            [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")] private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
-            [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
-
-            private static IntPtr GetWindowLongPtrSafe(IntPtr hWnd, int nIndex)
-                => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex));
-            private static IntPtr SetWindowLongPtrSafe(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
-                => IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong) : new IntPtr(SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32()));
-
-            private static string ClassOf(IntPtr h)
-            {
-                if (h == IntPtr.Zero) return "";
-                var sb = new StringBuilder(256);
-                return GetClassName(h, sb, sb.Capacity) != 0 ? sb.ToString() : "";
-            }
-
-            private static DependencyObject? ParentOf(DependencyObject? d)
-            {
-                if (d is null) return null;
-
-                // Визуальное дерево
-                if (d is Visual || d is Visual3D)
-                    return VisualTreeHelper.GetParent(d);
-
-                // Текстовые/документные элементы (Run/Inline/Paragraph/…)
-                if (d is FrameworkContentElement fce)
-                    return fce.Parent; // доступен у FCE (TextElement/Inline и т.п.)
-
-                if (d is ContentElement ce)
-                    return ContentOperations.GetParent(ce); // для базового ContentElement
-
-                // Фоллбэк — логическое дерево
-                return LogicalTreeHelper.GetParent(d);
-            }
-
+        {
+            var dx = a.X - b.X; var dy = a.Y - b.Y;
+            return dx * dx + dy * dy;
         }
+
+        private void RequestClose()
+        {
+            if (VM.IsFloating)
+            {
+                if (_floatWindow is not null)
+                {
+                    _floatWindow.Content = null;
+                    _floatWindow.Close();
+                    _floatWindow = null;
+                }
+            }
+            else
+            {
+                _host?.Children.Remove(this);
+            }
+        }
+
+        private void CloseBtn_Click(object sender, RoutedEventArgs e) => RequestClose();
+
+        // ======== Win32 ========
+
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
+        private const int WS_EX_LAYERED = 0x00080000;
+        private const uint GA_ROOT = 2;
+
+        [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X; public int Y; }
+
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
+        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT pt);
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int cap);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLong")] private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLong")] private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")] private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        private static IntPtr GetWindowLongPtrSafe(IntPtr hWnd, int nIndex)
+            => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex));
+        private static IntPtr SetWindowLongPtrSafe(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
+            => IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong) : new IntPtr(SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32()));
+
+        private static string ClassOf(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return "";
+            var sb = new StringBuilder(256);
+            return GetClassName(h, sb, sb.Capacity) != 0 ? sb.ToString() : "";
+        }
+
+        private static DependencyObject? ParentOf(DependencyObject? d)
+        {
+            if (d is null) return null;
+
+            // Визуальное дерево
+            if (d is Visual || d is Visual3D)
+                return VisualTreeHelper.GetParent(d);
+
+            // Текстовые/документные элементы (Run/Inline/Paragraph/…)
+            if (d is FrameworkContentElement fce)
+                return fce.Parent; // доступен у FCE (TextElement/Inline и т.п.)
+
+            if (d is ContentElement ce)
+                return ContentOperations.GetParent(ce); // для базового ContentElement
+
+            // Фоллбэк — логическое дерево
+            return LogicalTreeHelper.GetParent(d);
+        }
+
+    }
 }

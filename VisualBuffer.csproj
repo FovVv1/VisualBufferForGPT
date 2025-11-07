@@ -52,4 +52,9 @@
 	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
 	  </Resource>
 	</ItemGroup>
+	<ItemGroup>
+	  <Compile Update="BubbleFX\UI\Bubble\BubbleResizeWindow.xaml.cs">
+	    <SubType>Code</SubType>
+	  </Compile>
+	</ItemGroup>
 </Project>

@@ -1,0 +1,87 @@
+﻿<Window x:Class="VisualBuffer.BubbleFX.UI.Bubble.BubbleResizeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Bubble"
+        WindowStyle="None"
+        AllowsTransparency="False"
+        ResizeMode="CanResize"
+        Background="#1E1E1E"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Width="400" Height="260">
+
+    <!-- Рамка для перетаскивания/ресайза (без системных кнопок) -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="{Binding TitleBarHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                  ResizeBorderThickness="12"
+                  GlassFrameThickness="0"
+                  UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="{Binding TitleBarHeight, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ВЕРХНЯЯ ПАНЕЛЬ (наша) -->
+        <Grid Grid.Row="0" Background="#2A2A2A">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Заголовок. Не перехватывает клики — по нему можно тянуть окно -->
+            <TextBlock Grid.Column="0"
+                 Text="{Binding WindowTitle, RelativeSource={RelativeSource AncestorType=Window}}"
+                 Foreground="White"
+                 FontFamily="Cascadia Code"
+                 FontWeight="SemiBold"
+                 VerticalAlignment="Center"
+                 Margin="12,0,8,0"
+                 WindowChrome.IsHitTestVisibleInChrome="False"/>
+
+            <!-- Развернуть/нормализация -->
+            <Button Grid.Column="1" Width="42" Height="30" Margin="0"
+              ToolTip="Развернуть на весь экран"
+              Click="OnMaximizeClick"
+              WindowChrome.IsHitTestVisibleInChrome="True"
+              Background="Transparent" BorderBrush="Transparent">
+                <TextBlock Text="□" Foreground="White" FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            </Button>
+
+            <!-- Закрыть -->
+            <Button Grid.Column="2" Width="42" Height="30"
+              ToolTip="Закрыть"
+              Click="OnCloseClick"
+              WindowChrome.IsHitTestVisibleInChrome="True"
+              Background="Transparent" BorderBrush="Transparent">
+                <TextBlock Text="✕" Foreground="#FF5F5F" FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            </Button>
+        </Grid>
+
+        <!-- КОНТЕНТ РЕЖИМА РЕСАЙЗА -->
+        <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock Text="RESIZE MODE"
+                 Foreground="#E0E0E0"
+                 FontFamily="Cascadia Code"
+                 FontSize="28"
+                 FontWeight="Bold"
+                 TextAlignment="Center"/>
+            <TextBlock Text="Перемести и растяни окно, затем нажми ниже, чтобы показать контент."
+                 Foreground="#B0B0B0"
+                 FontFamily="Cascadia Code"
+                 FontSize="12"
+                 TextAlignment="Center" Margin="0,0,0,4"/>
+            <Button x:Name="ShowContentBtn"
+              Padding="16,6"
+              Click="OnShowContentClick"
+              Background="#3B7DDD"
+              Foreground="White"
+              BorderBrush="#2E5FAA"
+              FontFamily="Cascadia Code"
+              Content="Показать контент"/>
+        </StackPanel>
+    </Grid>
+</Window>
