@@ -118,5 +118,6 @@ namespace VisualBuffer.BubbleFX.Primitives
             //    dc.DrawGeometry(null, new Pen(Brushes.Magenta, 1), _clipGeom);
             //}
         }
+
     }
 }
