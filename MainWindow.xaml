@@ -2,7 +2,11 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:VisualBuffer.BubbleFX.Controls">
-    <Grid>
-        <controls:BubbleHostCanvas x:Name="Host" Background="Transparent"/>
+    <Grid Background="#111">
+        <controls:BubbleCircleView
+         Diameter="280"
+         Text="Hello from BubbleCircleView!&#x0a;Second line..."
+         Margin="24"/>
     </Grid>
+
 </Window>

@@ -52,4 +52,9 @@
 	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
 	  </Resource>
 	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="BubbleFX\Panels\" />
+	  <Folder Include="BubbleFX\Effects\" />
+	  <Folder Include="BubbleFX\Rendering\" />
+	</ItemGroup>
 </Project>

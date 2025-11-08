@@ -20,7 +20,7 @@ namespace VisualBuffer
         {
             var vm = new BubbleViewModel { X = x, Y = y, Title = title };
             var view = new BubbleView { DataContext = vm, Width = vm.Width, Height = vm.Height };
-            Host.AddBubble(view, new Point(x, y));
+            //Host.AddBubble(view, new Point(x, y));
         }
     }
 }

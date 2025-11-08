@@ -2,5 +2,15 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnExplicitShutdown">
-    <Application.Resources/>
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Если файл лежит в том же проекте, где App.xaml -->
+                <ResourceDictionary Source="/BubbleFX/Controls/Themes/Generic.xaml"/>
+                <!-- или (если стиль вынесен в другой словарь) -->
+                <!-- <ResourceDictionary Source="Themes/BubbleCircleTemplate.xaml"/> -->
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+        </Application.Resources>
+
 </Application>

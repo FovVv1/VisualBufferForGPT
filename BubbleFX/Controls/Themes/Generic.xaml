@@ -1,0 +1,57 @@
+﻿<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="clr-namespace:VisualBuffer.BubbleFX.Controls"
+    xmlns:primitives="clr-namespace:VisualBuffer.BubbleFX.Primitives">
+
+    <Style TargetType="{x:Type controls:BubbleCircleView}">
+        <!-- defaults -->
+        <Setter Property="Foreground" Value="Beige"/>
+        <Setter Property="FontFamily" Value="Cascadia Code"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="10"/>
+
+        <!-- если у BubbleCircleView ещё нет этих DPs — см. ниже -->
+        <!--<Setter Property="BubbleBackground" Value="#1E1E1E"/>
+        <Setter Property="BubbleOutline" Value="#3D3D3D"/>-->
+
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type controls:BubbleCircleView}">
+                    <Grid Background="Transparent" SnapsToDevicePixels="True">
+                        <!-- визуальный круг (пока без маски) -->
+                        <Ellipse
+                            Width="{TemplateBinding Diameter}"
+                            Height="{TemplateBinding Diameter}"
+                            Fill="{TemplateBinding BubbleBackground}"
+                            Stroke="{TemplateBinding BubbleOutline}"
+                            StrokeThickness="2"/>
+
+                        <!-- hit-test только внутри круга (по bounds) -->
+                        <primitives:CircleHitTestDecorator
+                            Width="{TemplateBinding Diameter}"
+                            Height="{TemplateBinding Diameter}">
+                            <Border Padding="{TemplateBinding Padding}" Background="{x:Null}">
+                                <ScrollViewer
+                                    x:Name="PART_Scroll"
+                                    VerticalScrollBarVisibility="Auto"
+                                    HorizontalScrollBarVisibility="Disabled"
+                                    CanContentScroll="False"
+                                    Focusable="False">
+                                    <TextBlock
+                                        x:Name="PART_Text"
+                                        Text="{TemplateBinding Text}"
+                                        Foreground="{TemplateBinding Foreground}"
+                                        TextWrapping="Wrap"
+                                        TextTrimming="CharacterEllipsis"
+                                        FontFamily="{TemplateBinding FontFamily}"
+                                        FontSize="{TemplateBinding FontSize}"/>
+                                </ScrollViewer>
+                            </Border>
+                        </primitives:CircleHitTestDecorator>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>
