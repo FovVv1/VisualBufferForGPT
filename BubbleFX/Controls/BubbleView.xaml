@@ -7,7 +7,38 @@
                  MinWidth="220" MinHeight="170"
                  >
         <UserControl.Resources>
-            <!-- Абсолютно голая кнопка -->
+        <!-- Анимируемые кисти для заголовка и контента -->
+        <SolidColorBrush x:Key="TitleBrush" Color="#FFFFFFFF"/>
+        <SolidColorBrush x:Key="ContentBrush" Color="#FFF5F5DC"/>
+
+        <!-- Водяной знак (placeholder) для TitleEdit -->
+        <Style x:Key="TextBox.Watermark" TargetType="TextBox" >
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Grid>
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                            <TextBlock x:Name="Watermark"
+                                     Text="{TemplateBinding Tag}"
+                                     Margin="4,0,4,0"
+                                     Foreground="#66FFFFFF"
+                                     IsHitTestVisible="False"
+                                     Visibility="Collapsed"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter TargetName="Watermark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Watermark" Property="Foreground" Value="#55FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Абсолютно голая кнопка -->
             <Style x:Key="Button.Ghost" TargetType="Button">
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
                 <Setter Property="Background" Value="Transparent"/>
@@ -240,9 +271,11 @@
                                VerticalAlignment="Center"
                                FontSize="17"
                                FontFamily="Cascadia Code"
-                               Foreground="White"
+                               Foreground="{StaticResource TitleBrush}"
                                MouseLeftButtonDown="TitleText_MouseLeftButtonDown"/>
                     <TextBox x:Name="TitleEdit"
+                             Style="{StaticResource TextBox.Watermark}"
+                             Tag="Название пузыря…" 
                              Visibility="Collapsed"
                              Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              Margin="2,2,2,2"
@@ -405,9 +438,9 @@
                               CanContentScroll="True"
                               PanningMode="None" >
                     <TextBlock x:Name="ContentTextBlock"
-                                           Foreground="Beige"
+                                           Foreground="{StaticResource ContentBrush}"
+                                           TextTrimming="None" 
                                            TextWrapping="Wrap"
-                                           TextTrimming="CharacterEllipsis"
                                            FontSize="13"
                                            FontWeight="Light"
                                            FontFamily="Cascadia Code"
